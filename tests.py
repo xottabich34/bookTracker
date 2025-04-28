@@ -37,6 +37,7 @@ async def update():
             self.from_user = user
             self.chat = chat
             self._text = "Тестовая книга"
+            self._photos = [DummyPhoto()]  # <-- сюда
 
         async def reply_text(self, text, reply_markup=None):
             print(f"Reply: {text}")
@@ -47,7 +48,7 @@ async def update():
 
         @property
         def photo(self):
-            return [DummyPhoto()]
+            return self._photos  # <-- сюда
 
     message = DummyMessage()
     return Update(update_id=1, message=message)
@@ -160,3 +161,25 @@ async def test_list_series(update, context):
 @pytest.mark.asyncio
 async def test_my_books(update, context):
     await my_books(update, context)
+
+
+@pytest.mark.asyncio
+async def test_add_cover_no_photo(update, context):
+    # Симулируем отсутствие фото
+    update.message._photo = []
+    context.user_data['new_book'] = {}
+    result = await add_cover(update, context)
+    assert result == 3  # Должно вернуться обратно к ADD_DESCRIPTION
+
+@pytest.mark.asyncio
+async def test_add_title_empty(update, context):
+    update.message._text = ""  # Пустое название
+    result = await add_title(update, context)
+    assert result == 0  # Остаётся на ADD_TITLE
+
+@pytest.mark.asyncio
+async def test_add_authors_empty(update, context):
+    context.user_data['new_book'] = {}
+    update.message._text = ""  # Пустая строка авторов
+    result = await add_authors(update, context)
+    assert result == 4  # Остается в ADD_AUTHORS
