@@ -1,3 +1,5 @@
 python-telegram-bot
 dotenv
 nest_asyncio
+pytest
+pytest-asyncio
