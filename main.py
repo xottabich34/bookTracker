@@ -88,7 +88,7 @@ def owner_only(func):
     # Декоратор, который проверяет, есть ли ID пользователя в списке разрешённых
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        if False:  # user_id not in ALLOWED_IDS:
+        if user_id not in ALLOWED_IDS:
             await update.message.reply_text("Извините, доступ запрещён.")
             return
         return await func(update, context)
@@ -114,7 +114,7 @@ menu_keyboard = ReplyKeyboardMarkup(
 
 # Начало процесса добавления книги
 @owner_only
-async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Введи название книги:", reply_markup=ReplyKeyboardRemove())
     return ADD_TITLE  # Переход к состоянию ADD_TITLE
 
@@ -227,18 +227,18 @@ async def finalize_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
-async def add_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_cancel(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Добавление книги отменено", reply_markup=menu_keyboard)
     return ConversationHandler.END
 
 
 @owner_only
-async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def menu_handler(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Выберите действие:", reply_markup=menu_keyboard)
 
 
 @owner_only
-async def list_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_books(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT title FROM books")
     rows = cursor.fetchall()
     if rows:
@@ -249,7 +249,7 @@ async def list_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
-async def my_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def my_books(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     cursor.execute("""
         SELECT b.title, ub.status FROM books b
@@ -265,7 +265,7 @@ async def my_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
-async def list_series(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_series(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT id, name FROM series")
     rows = cursor.fetchall()
     if not rows:

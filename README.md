@@ -12,7 +12,16 @@ Telegram-бот для хранения и отслеживания списка
 
 ## Структура проекта
 
-bookTracker/ ├── booktracker/ # Исходный код бота │ └── main.py ├── tests/ # Тесты проекта │ └── test_main.py ├── books.db # Локальная база данных SQLite ├── htmlcov/ # Отчёты покрытия кода (генерируются автоматически) ├── pytest.ini # Настройки pytest ├── requirements.txt # Зависимости проекта └── README.md # Этот файл
+bookTracker/ 
+├── booktracker/ # Исходный код бота 
+│ └── main.py 
+├── tests/ # Тесты проекта 
+│ └── test_main.py 
+├── books.db # Локальная база данных SQLite 
+├── htmlcov/ # Отчёты покрытия кода (генерируются автоматически) 
+├── pytest.ini # Настройки pytest 
+├── requirements.txt # Зависимости проекта 
+└── README.md # Этот файл
 
 
 ## Установка
