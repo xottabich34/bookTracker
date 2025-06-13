@@ -19,7 +19,7 @@ ALLOWED_IDS = set(map(int, os.getenv("ALLOWED_IDS", "").split(",")))  # Спис
 # Настройка логирования
 logging.basicConfig(
     level=logging.DEBUG,  # Уровень логирования — DEBUG
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",  # Формат логов
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",  # Формат логов ignore
     datefmt="%Y-%m-%d %H:%M:%S"  # Формат даты и времени
 )
 logger = logging.getLogger(__name__)  # Создание логгера для текущего модуля
@@ -75,7 +75,7 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS user_books (
     user_id INTEGER,
     book_id INTEGER,
-    status TEXT CHECK(status IN ('planning', 'reading', 'finished')),
+    status TEXT CHECK(status IN ('planning', 'reading', 'finished', 'cancelled')),
     PRIMARY KEY (user_id, book_id),
     FOREIGN KEY (book_id) REFERENCES books(id)
 )
@@ -144,11 +144,17 @@ async def add_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:  # Проверка, что сообщение содержит фото
         await update.message.reply_text("Пожалуйста, отправь фото")
         return ADD_COVER
-    file = await update.message.photo[-1].get_file()  # Получение файла изображения
-    byte_data = await file.download_as_bytearray()  # Преобразование изображения в байты
-    context.user_data['new_book']['image_blob'] = byte_data  # Сохранение обложки
-    await update.message.reply_text("Введите ISBN книги (или пропусти, отправив '-'):")
-    return ADD_ISBN  # Переход к состоянию ADD_ISBN
+    
+    try:
+        file = await update.message.photo[-1].get_file()  # Получение файла изображения
+        byte_data = await file.download_as_bytearray()  # Преобразование изображения в байты
+        context.user_data['new_book']['image_blob'] = byte_data  # Сохранение обложки
+        await update.message.reply_text("Введите ISBN книги (или пропусти, отправив '-'):")
+        return ADD_ISBN  # Переход к состоянию ADD_ISBN
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке изображения: {e}")
+        await update.message.reply_text("Ошибка при загрузке изображения. Попробуйте еще раз:")
+        return ADD_COVER
 
 
 # Обработка ввода ISBN
@@ -206,24 +212,42 @@ async def add_series_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def finalize_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = context.user_data['new_book']
-    cursor.execute("""
-        INSERT OR IGNORE INTO books (title, description, image_blob, isbn, series_id, series_order)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (data['title'], data['description'], data['image_blob'], data['isbn'], data.get('series_id'),
-          data.get('series_order')))
-    conn.commit()
-    cursor.execute("SELECT id FROM books WHERE title = ?", (data['title'],))
-    book_id = cursor.fetchone()[0]
-    for name in data['authors']:
-        cursor.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)", (name,))
-        cursor.execute("SELECT id FROM authors WHERE name = ?", (name,))
-        author_id = cursor.fetchone()[0]
-        cursor.execute("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
-                       (book_id, author_id))
-    conn.commit()
-    await update.message.reply_text(f"Книга «{data['title']}» добавлена ✅", reply_markup=menu_keyboard)
-    return ConversationHandler.END
+    try:
+        data = context.user_data['new_book']
+        
+        # Проверяем, не существует ли уже книга с таким названием
+        cursor.execute("SELECT id FROM books WHERE title = ?", (data['title'],))
+        existing_book = cursor.fetchone()
+        if existing_book:
+            await update.message.reply_text(f"Книга «{data['title']}» уже существует в базе данных.", reply_markup=menu_keyboard)
+            return ConversationHandler.END
+        
+        # Добавляем книгу
+        cursor.execute("""
+            INSERT INTO books (title, description, image_blob, isbn, series_id, series_order)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (data['title'], data['description'], data['image_blob'], data['isbn'], data.get('series_id'),
+              data.get('series_order')))
+        
+        book_id = cursor.lastrowid
+        
+        # Добавляем авторов
+        for name in data['authors']:
+            cursor.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)", (name,))
+            cursor.execute("SELECT id FROM authors WHERE name = ?", (name,))
+            author_id = cursor.fetchone()[0]
+            cursor.execute("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
+                           (book_id, author_id))
+        
+        conn.commit()
+        await update.message.reply_text(f"Книга «{data['title']}» добавлена ✅", reply_markup=menu_keyboard)
+        return ConversationHandler.END
+        
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Ошибка при добавлении книги: {e}")
+        await update.message.reply_text("Произошла ошибка при добавлении книги. Попробуйте еще раз.", reply_markup=menu_keyboard)
+        return ConversationHandler.END
 
 
 @owner_only
@@ -255,13 +279,32 @@ async def my_books(update: Update, _context: ContextTypes.DEFAULT_TYPE):
         SELECT b.title, ub.status FROM books b
         JOIN user_books ub ON b.id = ub.book_id
         WHERE ub.user_id = ?
+        ORDER BY b.title
     """, (user_id,))
     rows = cursor.fetchall()
+    
     if rows:
-        lines = [f"{title} — {status}" for title, status in rows]
-        await update.message.reply_text("📖 Ваши книги:\n" + "\n".join(lines))
+        status_emoji = {
+            'planning': '📋',
+            'reading': '📖', 
+            'finished': '✅',
+            'cancelled': '❌'
+        }
+        
+        lines = []
+        for title, status in rows:
+            emoji = status_emoji.get(status, '❓')
+            status_text = {
+                'planning': 'Запланировано',
+                'reading': 'Читаю',
+                'finished': 'Прочитано', 
+                'cancelled': 'Отменено'
+            }.get(status, status)
+            lines.append(f"{emoji} {title} — {status_text}")
+        
+        await update.message.reply_text("📖 Ваши книги:\n\n" + "\n".join(lines))
     else:
-        await update.message.reply_text("У вас нет отмеченных книг")
+        await update.message.reply_text("У вас нет отмеченных книг. Используйте кнопку «🏷 Статусы» чтобы добавить книги в свой список.")
 
 
 @owner_only
@@ -279,11 +322,224 @@ async def list_series(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n\n".join(result))
 
 
+# Константы для состояний управления статусами
+STATUS_SELECT_BOOK, STATUS_SELECT_STATUS = range(7, 9)
+
+# Клавиатура для выбора статуса
+status_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        ["📖 Читаю", "✅ Прочитано"],
+        ["📋 Запланировано", "❌ Отменено"]
+    ],
+    resize_keyboard=True
+)
+
+
+@owner_only
+async def status_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало процесса изменения статуса книги"""
+    cursor.execute("SELECT title FROM books ORDER BY title")
+    books = cursor.fetchall()
+    if not books:
+        await update.message.reply_text("В библиотеке нет книг для изменения статуса.")
+        return ConversationHandler.END
+    
+    book_list = "\n".join([f"{i+1}. {book[0]}" for i, book in enumerate(books)])
+    context.user_data['available_books'] = [book[0] for book in books]
+    
+    await update.message.reply_text(
+        f"Выберите книгу для изменения статуса (введите номер):\n\n{book_list}",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return STATUS_SELECT_BOOK
+
+
+@owner_only
+async def status_select_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора книги"""
+    try:
+        book_index = int(update.message.text.strip()) - 1
+        available_books = context.user_data.get('available_books', [])
+        
+        if book_index < 0 or book_index >= len(available_books):
+            await update.message.reply_text("Неверный номер книги. Попробуйте еще раз:")
+            return STATUS_SELECT_BOOK
+        
+        selected_book = available_books[book_index]
+        context.user_data['selected_book'] = selected_book
+        
+        # Получаем текущий статус книги
+        user_id = update.effective_user.id
+        cursor.execute("""
+            SELECT ub.status FROM user_books ub
+            JOIN books b ON ub.book_id = b.id
+            WHERE b.title = ? AND ub.user_id = ?
+        """, (selected_book, user_id))
+        current_status = cursor.fetchone()
+        
+        status_text = f"Текущий статус: {current_status[0] if current_status else 'Не установлен'}"
+        await update.message.reply_text(
+            f"Книга: {selected_book}\n{status_text}\n\nВыберите новый статус:",
+            reply_markup=status_keyboard
+        )
+        return STATUS_SELECT_STATUS
+        
+    except ValueError:
+        await update.message.reply_text("Пожалуйста, введите числовой номер книги:")
+        return STATUS_SELECT_BOOK
+
+
+@owner_only
+async def status_select_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора статуса"""
+    status_mapping = {
+        "📖 Читаю": "reading",
+        "✅ Прочитано": "finished", 
+        "📋 Запланировано": "planning",
+        "❌ Отменено": "cancelled"
+    }
+    
+    status_text = update.message.text.strip()
+    if status_text not in status_mapping:
+        await update.message.reply_text("Неверный статус. Выберите из предложенных вариантов:")
+        return STATUS_SELECT_STATUS
+    
+    selected_book = context.user_data['selected_book']
+    status = status_mapping[status_text]
+    user_id = update.effective_user.id
+    
+    try:
+        # Получаем ID книги
+        cursor.execute("SELECT id FROM books WHERE title = ?", (selected_book,))
+        book_id = cursor.fetchone()[0]
+        
+        # Обновляем или добавляем статус
+        cursor.execute("""
+            INSERT OR REPLACE INTO user_books (user_id, book_id, status)
+            VALUES (?, ?, ?)
+        """, (user_id, book_id, status))
+        
+        conn.commit()
+        await update.message.reply_text(
+            f"Статус книги «{selected_book}» изменен на: {status_text}",
+            reply_markup=menu_keyboard
+        )
+        return ConversationHandler.END
+        
+    except Exception as e:
+        logger.error(f"Ошибка при изменении статуса: {e}")
+        await update.message.reply_text(
+            "Произошла ошибка при изменении статуса. Попробуйте еще раз.",
+            reply_markup=menu_keyboard
+        )
+        return ConversationHandler.END
+
+
+@owner_only
+async def status_cancel(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    """Отмена изменения статуса"""
+    await update.message.reply_text("Изменение статуса отменено", reply_markup=menu_keyboard)
+    return ConversationHandler.END
+
+
+@owner_only
+async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Поиск книг по названию или автору"""
+    if not context.args:
+        await update.message.reply_text("Использование: /search <поисковый запрос>\nИли нажмите кнопку «🔍 Поиск» и введите запрос.")
+        return
+    
+    query = ' '.join(context.args)
+    search_term = f"%{query}%"
+    
+    cursor.execute("""
+        SELECT DISTINCT b.title, GROUP_CONCAT(a.name, ', ') as authors
+        FROM books b
+        LEFT JOIN book_authors ba ON b.id = ba.book_id
+        LEFT JOIN authors a ON ba.author_id = a.id
+        WHERE b.title LIKE ? OR a.name LIKE ?
+        GROUP BY b.id, b.title
+        ORDER BY b.title
+    """, (search_term, search_term))
+    
+    results = cursor.fetchall()
+    
+    if results:
+        lines = []
+        for title, authors in results:
+            author_text = f" ({authors})" if authors else ""
+            lines.append(f"📚 {title}{author_text}")
+        
+        await update.message.reply_text(f"🔍 Результаты поиска по запросу «{query}»:\n\n" + "\n".join(lines))
+    else:
+        await update.message.reply_text(f"По запросу «{query}» ничего не найдено.")
+
+
+# Константы для состояний поиска
+SEARCH_QUERY = 9
+
+
+@owner_only
+async def search_start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    """Начало поиска через кнопку"""
+    await update.message.reply_text("Введите поисковый запрос:", reply_markup=ReplyKeyboardRemove())
+    return SEARCH_QUERY
+
+
+@owner_only
+async def search_process(update: Update, _: ContextTypes.DEFAULT_TYPE):
+    """Обработка поискового запроса"""
+    query = update.message.text.strip()
+    if not query:
+        await update.message.reply_text("Поисковый запрос не может быть пустым. Попробуйте еще раз:")
+        return SEARCH_QUERY
+    
+    search_term = f"%{query}%"
+    
+    cursor.execute("""
+        SELECT DISTINCT b.title, GROUP_CONCAT(a.name, ', ') as authors
+        FROM books b
+        LEFT JOIN book_authors ba ON b.id = ba.book_id
+        LEFT JOIN authors a ON ba.author_id = a.id
+        WHERE b.title LIKE ? OR a.name LIKE ?
+        GROUP BY b.id, b.title
+        ORDER BY b.title
+    """, (search_term, search_term))
+    
+    results = cursor.fetchall()
+    
+    if results:
+        lines = []
+        for title, authors in results:
+            author_text = f" ({authors})" if authors else ""
+            lines.append(f"📚 {title}{author_text}")
+        
+        await update.message.reply_text(
+            f"🔍 Результаты поиска по запросу «{query}»:\n\n" + "\n".join(lines),
+            reply_markup=menu_keyboard
+        )
+    else:
+        await update.message.reply_text(
+            f"По запросу «{query}» ничего не найдено.",
+            reply_markup=menu_keyboard
+        )
+    
+    return ConversationHandler.END
+
+
+@owner_only
+async def search_cancel(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    """Отмена поиска"""
+    await update.message.reply_text("Поиск отменен", reply_markup=menu_keyboard)
+    return ConversationHandler.END
+
+
 # --- BOT LAUNCH ---
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    conv_handler = ConversationHandler(
+    # Conversation handler для добавления книг
+    add_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("add", add_start),
                       MessageHandler(filters.Regex("^➕ Добавить книгу$"), add_start)],
         states={
@@ -298,12 +554,35 @@ async def main():
         fallbacks=[CommandHandler("cancel", add_cancel)]
     )
 
+    # Conversation handler для управления статусами
+    status_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("status", status_start),
+                      MessageHandler(filters.Regex("^🏷 Статусы$"), status_start)],
+        states={
+            STATUS_SELECT_BOOK: [MessageHandler(filters.TEXT & ~filters.COMMAND, status_select_book)],
+            STATUS_SELECT_STATUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, status_select_status)],
+        },
+        fallbacks=[CommandHandler("cancel", status_cancel)]
+    )
+
+    # Conversation handler для поиска
+    search_conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^🔍 Поиск$"), search_start)],
+        states={
+            SEARCH_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_process)],
+        },
+        fallbacks=[CommandHandler("cancel", search_cancel)]
+    )
+
     app.add_handler(CommandHandler("start", menu_handler))
     app.add_handler(CommandHandler("menu", menu_handler))
-    app.add_handler(conv_handler)
+    app.add_handler(add_conv_handler)
+    app.add_handler(status_conv_handler)
+    app.add_handler(search_conv_handler)
     app.add_handler(CommandHandler("list", list_books))
     app.add_handler(CommandHandler("series", list_series))
     app.add_handler(CommandHandler("my", my_books))
+    app.add_handler(CommandHandler("search", search_books))
     app.add_handler(MessageHandler(filters.Regex("^📋 Список книг$"), list_books))
     app.add_handler(MessageHandler(filters.Regex("^📖 Мои книги$"), my_books))
     app.add_handler(MessageHandler(filters.Regex("^📚 Серии$"), list_series))
