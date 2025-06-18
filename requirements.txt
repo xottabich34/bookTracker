@@ -3,3 +3,6 @@ dotenv
 nest_asyncio
 pytest
 pytest-asyncio
+pytest-cov
+pytest-mock
+factory-boy
