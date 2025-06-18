@@ -59,6 +59,11 @@ ALLOWED_IDS=123456789
 `pytest -v --cov=booktracker --cov-report=term-missing --cov-report=html`
 
 После этого откройте файл htmlcov/index.html в браузере для просмотра покрытия кода.
-Лицензия
+
+## Авторы
+
+- xottabich34 (@xottabich34) - Основной разработчик
+
+## Лицензия
 
 Проект распространяется под лицензией MIT.

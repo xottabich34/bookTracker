@@ -1283,6 +1283,43 @@ async def universal_menu(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+@owner_only
+async def start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start - приветствие и восстановление клавиатуры"""
+    welcome_text = """
+🎉 **Добро пожаловать в BookTracker!** 📚
+
+Этот бот поможет вам:
+• 📖 Отслеживать прочитанные книги
+• 📚 Ведсти свою библиотеку
+• 🏷 Управлять статусами чтения
+• 🔍 Искать книги по названию и автору
+• 📊 Анализировать статистику чтения
+
+Выберите действие:
+"""
+    await update.message.reply_text(
+        welcome_text,
+        reply_markup=menu_keyboard,
+        parse_mode='Markdown'
+    )
+
+
+@owner_only
+async def show_covers(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    """Показать обложки книг"""
+    cursor.execute("SELECT title FROM books WHERE image_blob IS NOT NULL")
+    books_with_covers = cursor.fetchall()
+    
+    if books_with_covers:
+        text = "📷 **Книги с обложками:**\n\n"
+        for i, (title,) in enumerate(books_with_covers, 1):
+            text += f"{i}. {title}\n"
+        await update.message.reply_text(text, parse_mode='Markdown')
+    else:
+        await update.message.reply_text("В библиотеке пока нет книг с обложками.")
+
+
 # --- BOT LAUNCH ---
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
@@ -1389,7 +1426,7 @@ async def main():
         ]
     )
 
-    app.add_handler(CommandHandler("start", menu_handler))
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_handler))
     app.add_handler(CommandHandler("help", show_help))
     app.add_handler(CommandHandler("cancel", universal_cancel))
@@ -1411,6 +1448,7 @@ async def main():
     app.add_handler(MessageHandler(filters.Regex("^📋 Список книг$"), list_books))
     app.add_handler(MessageHandler(filters.Regex("^📖 Мои книги$"), my_books))
     app.add_handler(MessageHandler(filters.Regex("^📚 Серии$"), list_series))
+    app.add_handler(MessageHandler(filters.Regex("^📷 Обложки$"), show_covers))
     app.add_handler(MessageHandler(filters.Regex("^🔙 Отмена$"), universal_cancel))
     app.add_handler(MessageHandler(filters.Regex("^🏠 Главное меню$"), universal_menu))
 
