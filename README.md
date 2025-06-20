@@ -62,7 +62,7 @@ ALLOWED_IDS=123456789
 
 ## Авторы
 
-- xottabich34 (@xottabich34) - Основной разработчик
+- xottabich34 (@xottabich34) - Разработчик
 
 ## Лицензия
 
