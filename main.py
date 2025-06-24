@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)  # Создание логгера для �
 
 # --- НАСТРОЙКА БАЗЫ ДАННЫХ ---
 # Подключение к базе данных SQLite (или создание, если её нет)
-conn = sqlite3.connect("books.db", check_same_thread=False)
+conn = sqlite3.connect("https://www.pythonanywhere.com/user/xottabich34/files/home/xottabich34/books.db", check_same_thread=False)
 cursor = conn.cursor()
 
 # Создание таблицы для серий книг, если она ещё не существует
@@ -100,7 +100,9 @@ def owner_only(func):
         user_id = update.effective_user.id
         if user_id not in ALLOWED_IDS:
             await update.message.reply_text(f"Извините, доступ запрещён. {user_id}")
-            print(f'{user_id} is blocked')
+            print(f'user {update.effective_user.name} with id {user_id} is blocked')
+            with open('access.log','w+') as f:
+                f.write(f'user {update.effective_user.name} with id {user_id} is blocked')
             return
         return await func(update, context)
 
@@ -1324,6 +1326,10 @@ async def show_covers(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Универсальные обработчики для кнопок отмены и возврата в меню (работают всегда)
+    app.add_handler(MessageHandler(filters.Regex("^🔙 Отмена$"), universal_cancel), group=0)
+    app.add_handler(MessageHandler(filters.Regex("^🏠 Главное меню$"), universal_menu), group=0)
+
     # Conversation handler для добавления книг
     add_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("add", add_start),
@@ -1449,8 +1455,6 @@ async def main():
     app.add_handler(MessageHandler(filters.Regex("^📖 Мои книги$"), my_books))
     app.add_handler(MessageHandler(filters.Regex("^📚 Серии$"), list_series))
     app.add_handler(MessageHandler(filters.Regex("^📷 Обложки$"), show_covers))
-    app.add_handler(MessageHandler(filters.Regex("^🔙 Отмена$"), universal_cancel))
-    app.add_handler(MessageHandler(filters.Regex("^🏠 Главное меню$"), universal_menu))
 
     try:
         app.run_polling()

@@ -176,7 +176,7 @@ class TestBookAddition:
         assert result == ADD_SERIES
         assert mock_context.user_data['new_book']['authors'] == ["Лев Толстой", "Анна Каренина"]
         mock_update.message.reply_text.assert_called_once()
-        assert "серию" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "серии" in mock_update.message.reply_text.call_args[0][0].lower()
     
     @pytest.mark.asyncio
     async def test_add_authors_empty(self, mock_update, mock_context):
