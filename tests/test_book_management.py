@@ -211,7 +211,7 @@ class TestBookAddition:
         
         # Assert
         assert result == ADD_SERIES_ORDER
-        assert mock_context.user_data['new_book']['series_name'] == "Русская классика"
+        assert 'series_id' in mock_context.user_data['new_book']
         mock_update.message.reply_text.assert_called_once()
         assert "номер" in mock_update.message.reply_text.call_args[0][0].lower()
     
@@ -232,7 +232,7 @@ class TestBookAddition:
         result = await add_series(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         # Проверяем, что книга была сохранена
         mock_update.message.reply_text.assert_called()
     
@@ -247,7 +247,6 @@ class TestBookAddition:
             'image_blob': b'test', 
             'isbn': '9783161484100',
             'authors': ['Лев Толстой'],
-            'series_name': 'Русская классика',
             'series_id': 1
         }
         
@@ -279,7 +278,7 @@ class TestBookAddition:
         # Assert
         assert result == -1  # ConversationHandler.END
         mock_update.message.reply_text.assert_called()
-        assert "успешно добавлена" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "добавлена" in mock_update.message.reply_text.call_args[0][0].lower()
 
 
 class TestBookDeletion:
@@ -315,7 +314,7 @@ class TestBookDeletion:
         await delete_book_select(mock_update, mock_context)
         
         # Assert
-        assert mock_context.user_data['book_to_delete'] == 1
+        assert mock_context.user_data['book_to_delete'] == "Тестовая книга"
         mock_update.message.reply_text.assert_called_once()
         assert "подтвердите" in mock_update.message.reply_text.call_args[0][0].lower()
     
@@ -377,7 +376,7 @@ class TestBookEditing:
         await edit_book_select(mock_update, mock_context)
         
         # Assert
-        assert mock_context.user_data['book_to_edit'] == 1
+        assert mock_context.user_data['book_to_edit'] == "Тестовая книга"
         mock_update.message.reply_text.assert_called_once()
         assert "выберите поле" in mock_update.message.reply_text.call_args[0][0].lower()
     

@@ -28,14 +28,14 @@ logger = logging.getLogger(__name__)  # Создание логгера для �
 
 # --- НАСТРОЙКА БАЗЫ ДАННЫХ ---
 # Подключение к базе данных SQLite (или создание, если её нет)
-conn = sqlite3.connect("https://www.pythonanywhere.com/user/xottabich34/files/home/xottabich34/books.db", check_same_thread=False)
+conn = sqlite3.connect("books.db", check_same_thread=False)
 cursor = conn.cursor()
 
 # Создание таблицы для серий книг, если она ещё не существует
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS series (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE
+    name TEXT UNIQUE COLLATE NOCASE
 )
 """)
 
@@ -212,9 +212,14 @@ async def add_authors(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_series(update: Update, context: ContextTypes.DEFAULT_TYPE):
     series_name = update.message.text.strip()
     if series_name != "-":  # Если серия указана
-        cursor.execute("INSERT OR IGNORE INTO series (name) VALUES (?)", (series_name,))  # Добавление серии
-        cursor.execute("SELECT id FROM series WHERE name = ?", (series_name,))  # Получение ID серии
-        series_id = cursor.fetchone()[0]
+        cursor.execute("SELECT id FROM series WHERE name = ? COLLATE NOCASE", (series_name,))
+        result = cursor.fetchone()
+
+        if result:
+            series_id = result[0]
+        else:
+            cursor.execute("INSERT INTO series (name) VALUES (?)", (series_name,))
+            series_id = cursor.lastrowid
         context.user_data['new_book']['series_id'] = series_id  # Сохранение ID серии
         await update.message.reply_text("Введите номер книги в серии:")
         return ADD_SERIES_ORDER  # Переход к состоянию ADD_SERIES_ORDER
@@ -490,7 +495,7 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         FROM books b
         LEFT JOIN book_authors ba ON b.id = ba.book_id
         LEFT JOIN authors a ON ba.author_id = a.id
-        WHERE b.title LIKE ? OR a.name LIKE ?
+        WHERE b.title LIKE ? COLLATE NOCASE OR a.name LIKE ? COLLATE NOCASE
         GROUP BY b.id, b.title
         ORDER BY b.title
     """, (search_term, search_term))
@@ -543,7 +548,7 @@ async def search_process(update: Update, _: ContextTypes.DEFAULT_TYPE):
         FROM books b
         LEFT JOIN book_authors ba ON b.id = ba.book_id
         LEFT JOIN authors a ON ba.author_id = a.id
-        WHERE b.title LIKE ? OR a.name LIKE ?
+        WHERE b.title LIKE ? COLLATE NOCASE OR a.name LIKE ? COLLATE NOCASE
         GROUP BY b.id, b.title
         ORDER BY b.title
     """, (search_term, search_term))
@@ -1175,9 +1180,14 @@ async def edit_value_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 cursor.execute("UPDATE books SET series_id = NULL, series_order = NULL WHERE id = ?", (book_id,))
             else:
                 # Добавляем или обновляем серию
-                cursor.execute("INSERT OR IGNORE INTO series (name) VALUES (?)", (new_value,))
-                cursor.execute("SELECT id FROM series WHERE name = ?", (new_value,))
-                series_id = cursor.fetchone()[0]
+                cursor.execute("SELECT id FROM series WHERE name = ? COLLATE NOCASE", (new_value,))
+                result = cursor.fetchone()
+
+                if result:
+                    series_id = result[0]
+                else:
+                    cursor.execute("INSERT INTO series (name) VALUES (?)", (new_value,))
+                    series_id = cursor.lastrowid
                 cursor.execute("UPDATE books SET series_id = ? WHERE id = ?", (series_id, book_id))
             
             conn.commit()
