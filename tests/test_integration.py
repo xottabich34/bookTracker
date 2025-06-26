@@ -6,12 +6,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from main import (
     add_start, add_title, add_description, add_cover, add_isbn,
     add_authors, add_series, add_series_order, finalize_book,
-    list_books, my_books, search_books, search_process,
+    list_books, my_books, search_books, search_start, search_process,
     status_start, status_select_book, status_select_status,
     delete_book_start, delete_book_select, delete_book_confirm,
     edit_book_start, edit_book_select, edit_field_select, edit_value_process
 )
 
+@pytest.fixture(autouse=True)
+def patch_main_db(mock_db_connection):
+    with patch("main.cursor", mock_db_connection.cursor()), patch("main.conn", mock_db_connection):
+        yield
 
 class TestCompleteBookWorkflow:
     """Тесты полного рабочего процесса с книгой"""

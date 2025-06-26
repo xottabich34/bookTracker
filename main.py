@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)  # Создание логгера для �
 # Подключение к базе данных SQLite (или создание, если её нет)
 conn = sqlite3.connect("books.db", check_same_thread=False)
 cursor = conn.cursor()
-
 # Создание таблицы для серий книг, если она ещё не существует
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS series (
@@ -93,10 +92,10 @@ def owner_only(func):
             if update.message is not None:
                 await update.message.reply_text("Ошибка: пользователь не найден.")
             return
-        
+
         if update.message is None:
             return
-        
+
         user_id = update.effective_user.id
         if user_id not in ALLOWED_IDS:
             await update.message.reply_text(f"Извините, доступ запрещён. {user_id}")
@@ -111,7 +110,8 @@ def owner_only(func):
 
 # --- МАСТЕР ДОБАВЛЕНИЯ КНИГИ ---
 # Константы для состояний ConversationHandler
-ADD_TITLE, ADD_DESC, ADD_COVER, ADD_ISBN, ADD_AUTHORS, ADD_SERIES, ADD_SERIES_ORDER = range(7)
+ADD_TITLE, ADD_DESC, ADD_COVER, ADD_ISBN, ADD_AUTHORS, ADD_SERIES, ADD_SERIES_ORDER, SEARCH_QUERY = range(8)
+
 
 # Клавиатура с основными командами
 menu_keyboard = ReplyKeyboardMarkup(
@@ -137,7 +137,7 @@ cancel_keyboard = ReplyKeyboardMarkup(
 @owner_only
 async def add_start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Введи название книги:", 
+        "Введи название книги:",
         reply_markup=cancel_keyboard
     )
     return ADD_TITLE  # Переход к состоянию ADD_TITLE
@@ -168,7 +168,7 @@ async def add_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:  # Проверка, что сообщение содержит фото
         await update.message.reply_text("Пожалуйста, отправь фото")
         return ADD_COVER
-    
+
     try:
         file = await update.message.photo[-1].get_file()  # Получение файла изображения
         byte_data = await file.download_as_bytearray()  # Преобразование изображения в байты
@@ -243,23 +243,23 @@ async def add_series_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def finalize_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = context.user_data['new_book']
-        
+
         # Проверяем, не существует ли уже книга с таким названием
         cursor.execute("SELECT id FROM books WHERE title = ?", (data['title'],))
         existing_book = cursor.fetchone()
         if existing_book:
             await update.message.reply_text(f"Книга «{data['title']}» уже существует в базе данных.", reply_markup=menu_keyboard)
             return ConversationHandler.END
-        
+
         # Добавляем книгу
         cursor.execute("""
             INSERT INTO books (title, description, image_blob, isbn, series_id, series_order)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (data['title'], data['description'], data['image_blob'], data['isbn'], data.get('series_id'),
               data.get('series_order')))
-        
+
         book_id = cursor.lastrowid
-        
+
         # Добавляем авторов
         for name in data['authors']:
             cursor.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)", (name,))
@@ -267,11 +267,11 @@ async def finalize_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
             author_id = cursor.fetchone()[0]
             cursor.execute("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
                            (book_id, author_id))
-        
+
         conn.commit()
         await update.message.reply_text(f"Книга «{data['title']}» добавлена ✅", reply_markup=menu_keyboard)
         return ConversationHandler.END
-        
+
     except Exception as e:
         conn.rollback()
         logger.error(f"Ошибка при добавлении книги: {e}")
@@ -291,9 +291,10 @@ async def menu_handler(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
-async def list_books(update: Update, _context: ContextTypes.DEFAULT_TYPE):
-    cursor.execute("SELECT title FROM books")
-    rows = cursor.fetchall()
+async def list_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cur = getattr(context, 'cursor', cursor)
+    cur.execute("SELECT title FROM books")
+    rows = cur.fetchall()
     if rows:
         text = "\n".join([row[0] for row in rows])
         await update.message.reply_text("📚 Список книг:\n" + text)
@@ -302,51 +303,53 @@ async def list_books(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
-async def my_books(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+async def my_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cur = getattr(context, 'cursor', cursor)
     user_id = update.effective_user.id
-    cursor.execute("""
+    cur.execute("""
         SELECT b.title, ub.status FROM books b
         JOIN user_books ub ON b.id = ub.book_id
         WHERE ub.user_id = ?
         ORDER BY b.title
     """, (user_id,))
-    rows = cursor.fetchall()
-    
+    rows = cur.fetchall()
+
     if rows:
         status_emoji = {
             'planning': '📋',
-            'reading': '📖', 
+            'reading': '📖',
             'finished': '✅',
             'cancelled': '❌'
         }
-        
+
         lines = []
         for title, status in rows:
             emoji = status_emoji.get(status, '❓')
             status_text = {
                 'planning': 'Запланировано',
                 'reading': 'Читаю',
-                'finished': 'Прочитано', 
+                'finished': 'Прочитано',
                 'cancelled': 'Отменено'
             }.get(status, status)
             lines.append(f"{emoji} {title} — {status_text}")
-        
+
         await update.message.reply_text("📖 Ваши книги:\n\n" + "\n".join(lines))
     else:
         await update.message.reply_text("У вас нет отмеченных книг. Используйте кнопку «🏷 Статусы» чтобы добавить книги в свой список.")
 
 
 @owner_only
-async def list_series(update: Update, _context: ContextTypes.DEFAULT_TYPE):
-    cursor.execute("SELECT id, name FROM series")
-    rows = cursor.fetchall()
+async def list_series(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cur = getattr(context, 'cursor', cursor)
+    cur.execute("SELECT id, name FROM series")
+    rows = cur.fetchall()
     if not rows:
         await update.message.reply_text("Серии не найдены")
         return
     result = []
     for series_id, name in rows:
-        cursor.execute("SELECT title FROM books WHERE series_id = ? ORDER BY series_order", (series_id,))
-        books = [row[0] for row in cursor.fetchall()]
+        cur.execute("SELECT title FROM books WHERE series_id = ? ORDER BY series_order", (series_id,))
+        books = [row[0] for row in cur.fetchall()]
         result.append(f"📚 {name}:\n  " + "\n  ".join(books))
     await update.message.reply_text("\n\n".join(result))
 
@@ -381,10 +384,10 @@ async def status_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not books:
         await update.message.reply_text("В библиотеке нет книг для изменения статуса.")
         return ConversationHandler.END
-    
+
     book_list = "\n".join([f"{i+1}. {book[0]}" for i, book in enumerate(books)])
     context.user_data['available_books'] = [book[0] for book in books]
-    
+
     await update.message.reply_text(
         f"Выберите книгу для изменения статуса (введите номер):\n\n{book_list}",
         reply_markup=cancel_keyboard
@@ -398,14 +401,14 @@ async def status_select_book(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         book_index = int(update.message.text.strip()) - 1
         available_books = context.user_data.get('available_books', [])
-        
+
         if book_index < 0 or book_index >= len(available_books):
             await update.message.reply_text("Неверный номер книги. Попробуйте еще раз:")
             return STATUS_SELECT_BOOK
-        
+
         selected_book = available_books[book_index]
         context.user_data['selected_book'] = selected_book
-        
+
         # Получаем текущий статус книги
         user_id = update.effective_user.id
         cursor.execute("""
@@ -414,14 +417,14 @@ async def status_select_book(update: Update, context: ContextTypes.DEFAULT_TYPE)
             WHERE b.title = ? AND ub.user_id = ?
         """, (selected_book, user_id))
         current_status = cursor.fetchone()
-        
+
         status_text = f"Текущий статус: {current_status[0] if current_status else 'Не установлен'}"
         await update.message.reply_text(
             f"Книга: {selected_book}\n{status_text}\n\nВыберите новый статус:",
             reply_markup=status_keyboard
         )
         return STATUS_SELECT_STATUS
-        
+
     except ValueError:
         await update.message.reply_text("Пожалуйста, введите числовой номер книги:")
         return STATUS_SELECT_BOOK
@@ -432,38 +435,38 @@ async def status_select_status(update: Update, context: ContextTypes.DEFAULT_TYP
     """Обработка выбора статуса"""
     status_mapping = {
         "📖 Читаю": "reading",
-        "✅ Прочитано": "finished", 
+        "✅ Прочитано": "finished",
         "📋 Запланировано": "planning",
         "❌ Отменено": "cancelled"
     }
-    
+
     status_text = update.message.text.strip()
     if status_text not in status_mapping:
         await update.message.reply_text("Неверный статус. Выберите из предложенных вариантов:")
         return STATUS_SELECT_STATUS
-    
+
     selected_book = context.user_data['selected_book']
     status = status_mapping[status_text]
     user_id = update.effective_user.id
-    
+
     try:
         # Получаем ID книги
         cursor.execute("SELECT id FROM books WHERE title = ?", (selected_book,))
         book_id = cursor.fetchone()[0]
-        
+
         # Обновляем или добавляем статус
         cursor.execute("""
             INSERT OR REPLACE INTO user_books (user_id, book_id, status)
             VALUES (?, ?, ?)
         """, (user_id, book_id, status))
-        
+
         conn.commit()
         await update.message.reply_text(
             f"Статус книги «{selected_book}» изменен на: {status_text}",
             reply_markup=menu_keyboard
         )
         return ConversationHandler.END
-        
+
     except Exception as e:
         logger.error(f"Ошибка при изменении статуса: {e}")
         await update.message.reply_text(
@@ -486,10 +489,10 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Использование: /search <поисковый запрос>\nИли нажмите кнопку «🔍 Поиск» и введите запрос.")
         return
-    
+
     query = ' '.join(context.args)
     search_term = f"%{query}%"
-    
+
     cursor.execute("""
         SELECT DISTINCT b.title, GROUP_CONCAT(a.name, ', ') as authors
         FROM books b
@@ -499,15 +502,15 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
         GROUP BY b.id, b.title
         ORDER BY b.title
     """, (search_term, search_term))
-    
+
     results = cursor.fetchall()
-    
+
     if results:
         lines = []
         for title, authors in results:
             author_text = f" ({authors})" if authors else ""
             lines.append(f"📚 {title}{author_text}")
-        
+
         await update.message.reply_text(f"🔍 Результаты поиска по запросу «{query}»:\n\n" + "\n".join(lines))
     else:
         await update.message.reply_text(f"По запросу «{query}» ничего не найдено.")
@@ -534,16 +537,17 @@ async def search_start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
-async def search_process(update: Update, _: ContextTypes.DEFAULT_TYPE):
+async def search_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка поискового запроса"""
+    cur = getattr(context, 'cursor', cursor)
     query = update.message.text.strip()
     if not query:
         await update.message.reply_text("Поисковый запрос не может быть пустым. Попробуйте еще раз:")
         return SEARCH_QUERY
-    
+
     search_term = f"%{query}%"
-    
-    cursor.execute("""
+
+    cur.execute("""
         SELECT DISTINCT b.title, GROUP_CONCAT(a.name, ', ') as authors
         FROM books b
         LEFT JOIN book_authors ba ON b.id = ba.book_id
@@ -552,15 +556,15 @@ async def search_process(update: Update, _: ContextTypes.DEFAULT_TYPE):
         GROUP BY b.id, b.title
         ORDER BY b.title
     """, (search_term, search_term))
-    
-    results = cursor.fetchall()
-    
+
+    results = cur.fetchall()
+
     if results:
         lines = []
         for title, authors in results:
             author_text = f" ({authors})" if authors else ""
             lines.append(f"📚 {title}{author_text}")
-        
+
         await update.message.reply_text(
             f"🔍 Результаты поиска по запросу «{query}»:\n\n" + "\n".join(lines),
             reply_markup=menu_keyboard
@@ -570,7 +574,7 @@ async def search_process(update: Update, _: ContextTypes.DEFAULT_TYPE):
             f"По запросу «{query}» ничего не найдено.",
             reply_markup=menu_keyboard
         )
-    
+
     return ConversationHandler.END
 
 
@@ -589,10 +593,10 @@ async def book_info_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not books:
         await update.message.reply_text("В библиотеке нет книг.")
         return ConversationHandler.END
-    
+
     book_list = "\n".join([f"{i+1}. {book[0]}" for i, book in enumerate(books)])
     context.user_data['available_books'] = [book[0] for book in books]
-    
+
     await update.message.reply_text(
         f"Выберите книгу для просмотра информации (введите номер):\n\n{book_list}",
         reply_markup=cancel_keyboard
@@ -606,13 +610,13 @@ async def book_info_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         book_index = int(update.message.text.strip()) - 1
         available_books = context.user_data.get('available_books', [])
-        
+
         if book_index < 0 or book_index >= len(available_books):
             await update.message.reply_text("Неверный номер книги. Попробуйте еще раз:")
             return BOOK_INFO_SELECT
-        
+
         selected_book = available_books[book_index]
-        
+
         # Получаем подробную информацию о книге
         cursor.execute("""
             SELECT b.title, b.description, b.isbn, b.series_order, b.image_blob,
@@ -625,32 +629,32 @@ async def book_info_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
             WHERE b.title = ?
             GROUP BY b.id, b.title, b.description, b.isbn, b.series_order, b.image_blob, s.name
         """, (selected_book,))
-        
+
         book_info = cursor.fetchone()
         if not book_info:
             await update.message.reply_text("Книга не найдена.", reply_markup=menu_keyboard)
             return ConversationHandler.END
-        
+
         title, description, isbn, series_order, image_blob, series_name, authors = book_info
-        
+
         # Формируем текст с информацией
         info_text = f"📚 **{title}**\n\n"
-        
+
         if authors:
             info_text += f"👤 **Авторы:** {authors}\n\n"
-        
+
         if description:
             info_text += f"📝 **Описание:** {description}\n\n"
-        
+
         if series_name:
             series_text = f"📚 **Серия:** {series_name}"
             if series_order:
                 series_text += f" (книга {series_order})"
             info_text += series_text + "\n\n"
-        
+
         if isbn:
             info_text += f"🔢 **ISBN:** {isbn}\n\n"
-        
+
         # Отправляем обложку, если есть
         if image_blob:
             try:
@@ -673,9 +677,9 @@ async def book_info_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown',
                 reply_markup=menu_keyboard
             )
-        
+
         return ConversationHandler.END
-        
+
     except ValueError:
         await update.message.reply_text("Пожалуйста, введите числовой номер книги:")
         return BOOK_INFO_SELECT
@@ -696,10 +700,10 @@ async def delete_book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not books:
         await update.message.reply_text("В библиотеке нет книг для удаления.")
         return ConversationHandler.END
-    
+
     book_list = "\n".join([f"{i+1}. {book[0]}" for i, book in enumerate(books)])
     context.user_data['available_books'] = [book[0] for book in books]
-    
+
     await update.message.reply_text(
         f"⚠️ **ВНИМАНИЕ:** Удаление книги необратимо!\n\n"
         f"Выберите книгу для удаления (введите номер):\n\n{book_list}",
@@ -715,14 +719,14 @@ async def delete_book_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         book_index = int(update.message.text.strip()) - 1
         available_books = context.user_data.get('available_books', [])
-        
+
         if book_index < 0 or book_index >= len(available_books):
             await update.message.reply_text("Неверный номер книги. Попробуйте еще раз:")
             return DELETE_SELECT_BOOK
-        
+
         selected_book = available_books[book_index]
         context.user_data['book_to_delete'] = selected_book
-        
+
         # Создаем клавиатуру подтверждения
         confirm_keyboard = ReplyKeyboardMarkup(
             keyboard=[
@@ -730,14 +734,14 @@ async def delete_book_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ],
             resize_keyboard=True
         )
-        
+
         await update.message.reply_text(
             f"Вы действительно хотите удалить книгу «{selected_book}»?\n\n"
             f"Это действие нельзя отменить!",
             reply_markup=confirm_keyboard
         )
         return DELETE_CONFIRM
-        
+
     except ValueError:
         await update.message.reply_text("Пожалуйста, введите числовой номер книги:")
         return DELETE_SELECT_BOOK
@@ -747,35 +751,35 @@ async def delete_book_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def delete_book_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подтверждение удаления книги"""
     response = update.message.text.strip()
-    
+
     if response == "✅ Да, удалить":
         book_to_delete = context.user_data.get('book_to_delete')
-        
+
         try:
             # Получаем ID книги
             cursor.execute("SELECT id FROM books WHERE title = ?", (book_to_delete,))
             book_id = cursor.fetchone()
-            
+
             if not book_id:
                 await update.message.reply_text("Книга не найдена.", reply_markup=menu_keyboard)
                 return ConversationHandler.END
-            
+
             book_id = book_id[0]
-            
+
             # Удаляем связанные записи
             cursor.execute("DELETE FROM user_books WHERE book_id = ?", (book_id,))
             cursor.execute("DELETE FROM book_authors WHERE book_id = ?", (book_id,))
-            
+
             # Удаляем саму книгу
             cursor.execute("DELETE FROM books WHERE id = ?", (book_id,))
-            
+
             conn.commit()
-            
+
             await update.message.reply_text(
                 f"Книга «{book_to_delete}» успешно удалена из библиотеки.",
                 reply_markup=menu_keyboard
             )
-            
+
         except Exception as e:
             conn.rollback()
             logger.error(f"Ошибка при удалении книги: {e}")
@@ -783,13 +787,13 @@ async def delete_book_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "Произошла ошибка при удалении книги. Попробуйте еще раз.",
                 reply_markup=menu_keyboard
             )
-        
+
         return ConversationHandler.END
-        
+
     elif response == "❌ Нет, отменить":
         await update.message.reply_text("Удаление отменено.", reply_markup=menu_keyboard)
         return ConversationHandler.END
-    
+
     else:
         await update.message.reply_text("Пожалуйста, выберите «✅ Да, удалить» или «❌ Нет, отменить»:")
         return DELETE_CONFIRM
@@ -803,32 +807,33 @@ async def delete_book_cancel(update: Update, _context: ContextTypes.DEFAULT_TYPE
 
 
 @owner_only
-async def show_statistics(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать статистику библиотеки и чтения"""
+    cur = getattr(context, 'cursor', cursor)
     user_id = update.effective_user.id
-    
+
     try:
         # Общая статистика библиотеки
-        cursor.execute("SELECT COUNT(*) FROM books")
-        total_books = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM series")
-        total_series = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM authors")
-        total_authors = cursor.fetchone()[0]
-        
+        cur.execute("SELECT COUNT(*) FROM books")
+        total_books = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM series")
+        total_series = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM authors")
+        total_authors = cur.fetchone()[0]
+
         # Статистика пользователя
-        cursor.execute("""
+        cur.execute("""
             SELECT status, COUNT(*) as count
             FROM user_books
             WHERE user_id = ?
             GROUP BY status
         """, (user_id,))
-        user_stats = dict(cursor.fetchall())
-        
+        user_stats = dict(cur.fetchall())
+
         # Статистика по авторам
-        cursor.execute("""
+        cur.execute("""
             SELECT a.name, COUNT(ba.book_id) as book_count
             FROM authors a
             JOIN book_authors ba ON a.id = ba.author_id
@@ -836,10 +841,10 @@ async def show_statistics(update: Update, _context: ContextTypes.DEFAULT_TYPE):
             ORDER BY book_count DESC
             LIMIT 5
         """)
-        top_authors = cursor.fetchall()
-        
+        top_authors = cur.fetchall()
+
         # Статистика по сериям
-        cursor.execute("""
+        cur.execute("""
             SELECT s.name, COUNT(b.id) as book_count
             FROM series s
             JOIN books b ON s.id = b.series_id
@@ -847,16 +852,16 @@ async def show_statistics(update: Update, _context: ContextTypes.DEFAULT_TYPE):
             ORDER BY book_count DESC
             LIMIT 5
         """)
-        top_series = cursor.fetchall()
-        
+        top_series = cur.fetchall()
+
         # Формируем отчет
         stats_text = "📊 **Статистика библиотеки**\n\n"
-        
+
         # Общая статистика
         stats_text += f"📚 **Всего книг:** {total_books}\n"
         stats_text += f"📚 **Серий:** {total_series}\n"
         stats_text += f"👤 **Авторов:** {total_authors}\n\n"
-        
+
         # Статистика пользователя
         stats_text += "📖 **Ваши книги:**\n"
         status_names = {
@@ -865,44 +870,46 @@ async def show_statistics(update: Update, _context: ContextTypes.DEFAULT_TYPE):
             'finished': 'Прочитано',
             'cancelled': 'Отменено'
         }
-        
+
         total_user_books = 0
         for status, count in user_stats.items():
             status_name = status_names.get(status, status)
             stats_text += f"  • {status_name}: {count}\n"
             total_user_books += count
-        
+
         if total_user_books == 0:
             stats_text += "  • У вас пока нет отмеченных книг\n"
-        
+
         stats_text += f"\n**Всего ваших книг:** {total_user_books}\n\n"
-        
+
         # Топ авторов
         if top_authors:
             stats_text += "👑 **Топ авторов:**\n"
             for author, count in top_authors:
                 stats_text += f"  • {author}: {count} книг\n"
             stats_text += "\n"
-        
+
         # Топ серий
         if top_series:
             stats_text += "📚 **Топ серий:**\n"
             for series, count in top_series:
                 stats_text += f"  • {series}: {count} книг\n"
-        
+
         await update.message.reply_text(stats_text, parse_mode='Markdown')
-        
+
     except Exception as e:
         logger.error(f"Ошибка при получении статистики: {e}")
         await update.message.reply_text("Произошла ошибка при получении статистики.")
 
 
 @owner_only
-async def export_library(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+async def export_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт библиотеки в текстовый файл"""
+    cur = getattr(context, 'cursor', cursor)
+    db_conn = getattr(context, 'conn', conn)
     try:
         # Получаем все книги с полной информацией
-        cursor.execute("""
+        cur.execute("""
             SELECT b.title, b.description, b.isbn, b.series_order,
                    s.name as series_name,
                    GROUP_CONCAT(a.name, ', ') as authors
@@ -913,66 +920,66 @@ async def export_library(update: Update, _context: ContextTypes.DEFAULT_TYPE):
             GROUP BY b.id, b.title, b.description, b.isbn, b.series_order, s.name
             ORDER BY b.title
         """)
-        
-        books = cursor.fetchall()
-        
+
+        books = cur.fetchall()
+
         if not books:
             await update.message.reply_text("Библиотека пуста.")
             return
-        
+
         # Формируем содержимое файла
         export_content = "📚 МОЯ БИБЛИОТЕКА\n"
         export_content += "=" * 50 + "\n\n"
-        
+
         for i, book in enumerate(books, 1):
             title, description, isbn, series_order, series_name, authors = book
-            
+
             export_content += f"{i}. {title}\n"
-            
+
             if authors:
                 export_content += f"   Авторы: {authors}\n"
-            
+
             if series_name:
                 series_text = f"   Серия: {series_name}"
                 if series_order:
                     series_text += f" (книга {series_order})"
                 export_content += series_text + "\n"
-            
+
             if isbn:
                 export_content += f"   ISBN: {isbn}\n"
-            
+
             if description:
                 # Обрезаем длинное описание
                 desc = description[:200] + "..." if len(description) > 200 else description
                 export_content += f"   Описание: {desc}\n"
-            
+
             export_content += "\n"
-        
+
         # Добавляем статистику
-        cursor.execute("SELECT COUNT(*) FROM books")
-        total_books = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM series")
-        total_series = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM authors")
-        total_authors = cursor.fetchone()[0]
-        
+        cur.execute("SELECT COUNT(*) FROM books")
+        total_books = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM series")
+        total_series = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM authors")
+        total_authors = cur.fetchone()[0]
+
         export_content += "=" * 50 + "\n"
         export_content += f"📊 СТАТИСТИКА\n"
         export_content += f"Всего книг: {total_books}\n"
         export_content += f"Серий: {total_series}\n"
         export_content += f"Авторов: {total_authors}\n"
         export_content += f"Дата экспорта: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        
+
         # Создаем временный файл
         import tempfile
         import os
-        
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
             f.write(export_content)
             temp_file_path = f.name
-        
+
         # Отправляем файл
         with open(temp_file_path, 'rb') as f:
             await update.message.reply_document(
@@ -980,10 +987,10 @@ async def export_library(update: Update, _context: ContextTypes.DEFAULT_TYPE):
                 filename=f"library_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                 caption="📚 Экспорт вашей библиотеки"
             )
-        
+
         # Удаляем временный файл
         os.unlink(temp_file_path)
-        
+
     except Exception as e:
         logger.error(f"Ошибка при экспорте библиотеки: {e}")
         await update.message.reply_text("Произошла ошибка при экспорте библиотеки.")
@@ -997,10 +1004,10 @@ async def edit_book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not books:
         await update.message.reply_text("В библиотеке нет книг для редактирования.")
         return ConversationHandler.END
-    
+
     book_list = "\n".join([f"{i+1}. {book[0]}" for i, book in enumerate(books)])
     context.user_data['available_books'] = [book[0] for book in books]
-    
+
     await update.message.reply_text(
         f"Выберите книгу для редактирования (введите номер):\n\n{book_list}",
         reply_markup=cancel_keyboard
@@ -1014,14 +1021,14 @@ async def edit_book_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         book_index = int(update.message.text.strip()) - 1
         available_books = context.user_data.get('available_books', [])
-        
+
         if book_index < 0 or book_index >= len(available_books):
             await update.message.reply_text("Неверный номер книги. Попробуйте еще раз:")
             return EDIT_SELECT_BOOK
-        
+
         selected_book = available_books[book_index]
         context.user_data['book_to_edit'] = selected_book
-        
+
         # Создаем клавиатуру для выбора поля
         field_keyboard = ReplyKeyboardMarkup(
             keyboard=[
@@ -1031,13 +1038,13 @@ async def edit_book_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             resize_keyboard=True
         )
-        
+
         await update.message.reply_text(
             f"Выберите, что хотите отредактировать в книге «{selected_book}»:",
             reply_markup=field_keyboard
         )
         return EDIT_SELECT_FIELD
-        
+
     except ValueError:
         await update.message.reply_text("Пожалуйста, введите числовой номер книги:")
         return EDIT_SELECT_BOOK
@@ -1047,28 +1054,28 @@ async def edit_book_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def edit_field_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка выбора поля для редактирования"""
     field = update.message.text.strip()
-    
+
     if field == "❌ Отмена":
         await update.message.reply_text("Редактирование отменено", reply_markup=menu_keyboard)
         return ConversationHandler.END
-    
+
     field_mapping = {
         "📝 Описание": "description",
         "🔢 ISBN": "isbn",
         "👤 Авторы": "authors",
         "📚 Серия": "series"
     }
-    
+
     if field not in field_mapping:
         await update.message.reply_text("Неверный выбор. Выберите поле из списка:")
         return EDIT_SELECT_FIELD
-    
+
     context.user_data['edit_field'] = field_mapping[field]
-    
+
     # Получаем текущее значение
     book_title = context.user_data['book_to_edit']
     field_name = field_mapping[field]
-    
+
     if field_name == "description" or field_name == "isbn":
         cursor.execute(f"SELECT {field_name} FROM books WHERE title = ?", (book_title,))
         current_value = cursor.fetchone()[0] or "Не задано"
@@ -1107,7 +1114,7 @@ async def edit_field_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Текущая серия: {current_value}\n\nВведите новое название серии (или '-' для удаления):",
             reply_markup=ReplyKeyboardRemove()
         )
-    
+
     return EDIT_VALUE
 
 
@@ -1116,11 +1123,11 @@ async def edit_value_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Обработка нового значения поля"""
     if update.message is None or update.message.text is None:
         return ConversationHandler.END
-    
+
     new_value = update.message.text.strip()
     book_title = context.user_data['book_to_edit']
     field_name = context.user_data['edit_field']
-    
+
     try:
         if field_name == "description":
             cursor.execute("UPDATE books SET description = ? WHERE title = ?", (new_value, book_title))
@@ -1129,7 +1136,7 @@ async def edit_value_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"Описание книги «{book_title}» обновлено!",
                 reply_markup=menu_keyboard
             )
-            
+
         elif field_name == "isbn":
             # Проверяем формат ISBN
             isbn_clean = new_value.replace("-", "").replace(" ", "")
@@ -1138,7 +1145,7 @@ async def edit_value_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     "Некорректный формат ISBN. Введите 10 или 13 цифр (последняя может быть X для ISBN-10) или '-' для удаления:"
                 )
                 return EDIT_VALUE
-            
+
             isbn_value = None if new_value == '-' else new_value
             cursor.execute("UPDATE books SET isbn = ? WHERE title = ?", (isbn_value, book_title))
             conn.commit()
@@ -1146,35 +1153,35 @@ async def edit_value_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"ISBN книги «{book_title}» обновлен!",
                 reply_markup=menu_keyboard
             )
-            
+
         elif field_name == "authors":
             # Удаляем старых авторов
             cursor.execute("""
                 DELETE FROM book_authors 
                 WHERE book_id = (SELECT id FROM books WHERE title = ?)
             """, (book_title,))
-            
+
             # Добавляем новых авторов
             if new_value and new_value != '-':
                 author_names = [a.strip() for a in new_value.split(',') if a.strip()]
                 book_id = cursor.execute("SELECT id FROM books WHERE title = ?", (book_title,)).fetchone()[0]
-                
+
                 for name in author_names:
                     cursor.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)", (name,))
                     cursor.execute("SELECT id FROM authors WHERE name = ?", (name,))
                     author_id = cursor.fetchone()[0]
                     cursor.execute("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
                                    (book_id, author_id))
-            
+
             conn.commit()
             await update.message.reply_text(
                 f"Авторы книги «{book_title}» обновлены!",
                 reply_markup=menu_keyboard
             )
-            
+
         elif field_name == "series":
             book_id = cursor.execute("SELECT id FROM books WHERE title = ?", (book_title,)).fetchone()[0]
-            
+
             if new_value == '-':
                 # Удаляем серию
                 cursor.execute("UPDATE books SET series_id = NULL, series_order = NULL WHERE id = ?", (book_id,))
@@ -1189,15 +1196,15 @@ async def edit_value_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     cursor.execute("INSERT INTO series (name) VALUES (?)", (new_value,))
                     series_id = cursor.lastrowid
                 cursor.execute("UPDATE books SET series_id = ? WHERE id = ?", (series_id, book_id))
-            
+
             conn.commit()
             await update.message.reply_text(
                 f"Серия книги «{book_title}» обновлена!",
                 reply_markup=menu_keyboard
             )
-        
+
         return ConversationHandler.END
-        
+
     except Exception as e:
         conn.rollback()
         logger.error(f"Ошибка при редактировании книги: {e}")
@@ -1268,7 +1275,7 @@ async def show_help(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 /statistics
 /export_library
 """
-    
+
     if update.message is not None:
         await update.message.reply_text(help_text, parse_mode='Markdown')
 
@@ -1322,7 +1329,7 @@ async def show_covers(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     """Показать обложки книг"""
     cursor.execute("SELECT title FROM books WHERE image_blob IS NOT NULL")
     books_with_covers = cursor.fetchall()
-    
+
     if books_with_covers:
         text = "📷 **Книги с обложками:**\n\n"
         for i, (title,) in enumerate(books_with_covers, 1):
@@ -1466,6 +1473,10 @@ async def main():
     app.add_handler(MessageHandler(filters.Regex("^📚 Серии$"), list_series))
     app.add_handler(MessageHandler(filters.Regex("^📷 Обложки$"), show_covers))
 
+    return app
+
+async def main():
+    app = build_application()
     try:
         app.run_polling()
     except RuntimeError:

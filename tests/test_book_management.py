@@ -11,6 +11,7 @@ from main import (
     edit_value_process, ADD_TITLE, ADD_DESC, ADD_COVER, ADD_ISBN,
     ADD_AUTHORS, ADD_SERIES, ADD_SERIES_ORDER
 )
+from telegram.ext import ConversationHandler
 
 
 class TestBookAddition:
@@ -308,7 +309,7 @@ class TestBookDeletion:
         mock_db_connection.commit()
         
         mock_update.message.text = "1"
-        mock_context.user_data['books_list'] = [(1, "Тестовая книга")]
+        mock_context.user_data['available_books'] = ["Тестовая книга"]
         
         # Act
         await delete_book_select(mock_update, mock_context)
@@ -316,7 +317,7 @@ class TestBookDeletion:
         # Assert
         assert mock_context.user_data['book_to_delete'] == "Тестовая книга"
         mock_update.message.reply_text.assert_called_once()
-        assert "подтвердите" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "удалить книгу" in mock_update.message.reply_text.call_args[0][0].lower()
     
     @pytest.mark.asyncio
     async def test_delete_book_confirm_yes(self, mock_update, mock_context, mock_db_connection):
@@ -326,19 +327,19 @@ class TestBookDeletion:
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Тестовая книга", "Описание"))
         mock_db_connection.commit()
         
-        mock_update.message.text = "Да"
-        mock_context.user_data['book_to_delete'] = 1
+        mock_update.message.text = "✅ Да, удалить"
+        mock_context.user_data['book_to_delete'] = "Тестовая книга"
         
         # Act
         result = await delete_book_confirm(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         mock_update.message.reply_text.assert_called()
         assert "удалена" in mock_update.message.reply_text.call_args[0][0].lower()
         
         # Проверяем, что книга действительно удалена
-        cursor.execute("SELECT COUNT(*) FROM books WHERE id = 1")
+        cursor.execute("SELECT COUNT(*) FROM books WHERE title = ?", ("Тестовая книга",))
         count = cursor.fetchone()[0]
         assert count == 0
 
@@ -370,7 +371,7 @@ class TestBookEditing:
         mock_db_connection.commit()
         
         mock_update.message.text = "1"
-        mock_context.user_data['books_list'] = [(1, "Тестовая книга")]
+        mock_context.user_data['available_books'] = ["Тестовая книга"]
         
         # Act
         await edit_book_select(mock_update, mock_context)
@@ -378,22 +379,23 @@ class TestBookEditing:
         # Assert
         assert mock_context.user_data['book_to_edit'] == "Тестовая книга"
         mock_update.message.reply_text.assert_called_once()
-        assert "выберите поле" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "отредактировать в книге" in mock_update.message.reply_text.call_args[0][0].lower()
     
     @pytest.mark.asyncio
-    async def test_edit_field_select_description(self, mock_update, mock_context):
+    async def test_edit_field_select_description(self, mock_update, mock_context, mock_db_connection):
         """Тест: выбор поля описания для редактирования"""
         # Arrange
-        mock_update.message.text = "Описание"
-        mock_context.user_data['book_to_edit'] = 1
-        
+        cursor = mock_db_connection.cursor()
+        cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Тестовая книга", "Описание"))
+        mock_db_connection.commit()
+        mock_update.message.text = "📝 Описание"
+        mock_context.user_data['book_to_edit'] = "Тестовая книга"
         # Act
         await edit_field_select(mock_update, mock_context)
-        
         # Assert
-        assert mock_context.user_data['field_to_edit'] == 'description'
+        assert mock_context.user_data['edit_field'] == 'description'
         mock_update.message.reply_text.assert_called_once()
-        assert "новое описание" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "введите новое значение" in mock_update.message.reply_text.call_args[0][0].lower()
     
     @pytest.mark.asyncio
     async def test_edit_value_process_description(self, mock_update, mock_context, mock_db_connection):
@@ -404,18 +406,15 @@ class TestBookEditing:
         mock_db_connection.commit()
         
         mock_update.message.text = "Новое описание"
-        mock_context.user_data['book_to_edit'] = 1
-        mock_context.user_data['field_to_edit'] = 'description'
-        
+        mock_context.user_data['book_to_edit'] = "Тестовая книга"
+        mock_context.user_data['edit_field'] = 'description'
         # Act
         result = await edit_value_process(mock_update, mock_context)
-        
         # Assert
         assert result == -1  # ConversationHandler.END
         mock_update.message.reply_text.assert_called()
         assert "обновлено" in mock_update.message.reply_text.call_args[0][0].lower()
-        
         # Проверяем, что описание действительно обновлено
-        cursor.execute("SELECT description FROM books WHERE id = 1")
+        cursor.execute("SELECT description FROM books WHERE title = ?", ("Тестовая книга",))
         description = cursor.fetchone()[0]
         assert description == "Новое описание" 

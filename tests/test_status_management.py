@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from main import (
     status_start, status_select_book, status_select_status, status_cancel
 )
+from telegram.ext import ConversationHandler
 
 
 class TestStatusManagement:
@@ -34,7 +35,7 @@ class TestStatusManagement:
         
         # Assert
         mock_update.message.reply_text.assert_called_once()
-        assert "книг нет" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "в библиотеке нет книг для изменения статуса" in mock_update.message.reply_text.call_args[0][0].lower()
     
     @pytest.mark.asyncio
     async def test_status_select_book_valid(self, mock_update, mock_context, mock_db_connection):
@@ -93,7 +94,7 @@ class TestStatusManagement:
         result = await status_select_status(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         mock_update.message.reply_text.assert_called()
         assert "статус установлен" in mock_update.message.reply_text.call_args[0][0].lower()
         
@@ -118,7 +119,7 @@ class TestStatusManagement:
         result = await status_select_status(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         
         # Проверяем, что статус сохранен в базе
         cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, 1))
@@ -141,7 +142,7 @@ class TestStatusManagement:
         result = await status_select_status(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         
         # Проверяем, что статус сохранен в базе
         cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, 1))
@@ -164,7 +165,7 @@ class TestStatusManagement:
         result = await status_select_status(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         
         # Проверяем, что статус сохранен в базе
         cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, 1))
@@ -206,7 +207,7 @@ class TestStatusManagement:
         result = await status_select_status(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         
         # Проверяем, что статус обновлен
         cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, 1))
@@ -221,6 +222,6 @@ class TestStatusManagement:
         result = await status_cancel(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         mock_update.message.reply_text.assert_called_once()
         assert "отменено" in mock_update.message.reply_text.call_args[0][0].lower() 

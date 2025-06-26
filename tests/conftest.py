@@ -160,16 +160,13 @@ def mock_update(mock_message):
 
 
 @pytest.fixture
-def mock_context():
+def mock_context(mock_db_connection):
     """Создает мок контекста"""
-    context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+    context = MagicMock()
     context.user_data = {}
     context.args = []
-    context.bot = MagicMock()
-    context.bot.send_message = AsyncMock()
-    context.bot.send_photo = AsyncMock()
-    context.bot.send_document = AsyncMock()
-    
+    context.cursor = mock_db_connection.cursor()
+    context.conn = mock_db_connection
     return context
 
 

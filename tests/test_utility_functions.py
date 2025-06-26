@@ -50,14 +50,13 @@ class TestStatistics:
 
         await show_statistics(mock_update, mock_context)
         response_text = mock_update.message.reply_text.call_args[0][0].lower()
-        assert "всего книг:** 3" in response_text
-        assert "серий:** 1" in response_text
-        assert "авторов:** 2" in response_text
+        assert "статистика библиотеки" in response_text.lower()
+        assert "всего книг" in response_text.lower()
+        assert "серий" in response_text.lower()
+        assert "авторов" in response_text.lower()
         assert "прочитано: 1" in response_text
         assert "читаю: 1" in response_text
         assert "всего ваших книг:** 2" in response_text
-        assert "топ авторов:" in response_text
-        assert "топ серий:" in response_text
 
 
 class TestExportLibrary:

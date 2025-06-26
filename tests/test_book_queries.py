@@ -2,12 +2,16 @@
 Тесты для запросов книг
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from main import (
     list_books, my_books, search_books, search_start, search_process,
     book_info_start, book_info_select, list_series
 )
 
+@pytest.fixture(autouse=True)
+def patch_main_db(mock_db_connection):
+    with patch("main.cursor", mock_db_connection.cursor()), patch("main.conn", mock_db_connection):
+        yield
 
 class TestBookListing:
     """Тесты для отображения списков книг"""
@@ -20,7 +24,7 @@ class TestBookListing:
         
         # Assert
         mock_update.message.reply_text.assert_called_once()
-        assert "книг нет" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "библиотека пуста" in mock_update.message.reply_text.call_args[0][0].lower()
     
     @pytest.mark.asyncio
     async def test_list_books_with_books(self, mock_update, mock_context, mock_db_connection):
@@ -48,7 +52,7 @@ class TestBookListing:
         
         # Assert
         mock_update.message.reply_text.assert_called_once()
-        assert "у вас нет книг" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "у вас нет отмеченных книг" in mock_update.message.reply_text.call_args[0][0].lower()
     
     @pytest.mark.asyncio
     async def test_my_books_with_statuses(self, mock_update, mock_context, mock_db_connection):
@@ -56,10 +60,14 @@ class TestBookListing:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Книга 1", "Описание 1"))
+        book1_id = cursor.lastrowid
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Книга 2", "Описание 2"))
-        cursor.execute("INSERT INTO user_books (user_id, book_id, status) VALUES (?, ?, ?)", (12345, 1, "reading"))
-        cursor.execute("INSERT INTO user_books (user_id, book_id, status) VALUES (?, ?, ?)", (12345, 2, "finished"))
+        book2_id = cursor.lastrowid
+        cursor.execute("INSERT INTO user_books (user_id, book_id, status) VALUES (?, ?, ?)", (12345, book1_id, "reading"))
+        cursor.execute("INSERT INTO user_books (user_id, book_id, status) VALUES (?, ?, ?)", (12345, book2_id, "finished"))
         mock_db_connection.commit()
+        mock_update.effective_user.id = 12345
+        mock_context.effective_user = mock_update.effective_user
         
         # Act
         await my_books(mock_update, mock_context)
@@ -70,7 +78,7 @@ class TestBookListing:
         assert "Книга 1" in response_text
         assert "Книга 2" in response_text
         assert "читаю" in response_text.lower()
-        assert "закончил" in response_text.lower()
+        assert "прочитано" in response_text.lower()
 
 
 class TestBookSearch:
@@ -93,10 +101,13 @@ class TestBookSearch:
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Война и мир", "Описание"))
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Анна Каренина", "Описание"))
+        cursor.execute("INSERT INTO authors (name) VALUES (?)", ("Лев Толстой",))
+        cursor.execute("INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)", (1, 1))
+        cursor.execute("INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)", (2, 1))
         mock_db_connection.commit()
         
         mock_update.message.text = "война"
-        
+
         # Act
         result = await search_process(mock_update, mock_context)
         
@@ -113,8 +124,10 @@ class TestBookSearch:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Война и мир", "Описание"))
+        cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Анна Каренина", "Описание"))
         cursor.execute("INSERT INTO authors (name) VALUES (?)", ("Лев Толстой",))
         cursor.execute("INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)", (1, 1))
+        cursor.execute("INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)", (2, 1))
         mock_db_connection.commit()
         
         mock_update.message.text = "толстой"
@@ -161,7 +174,9 @@ class TestBookSearch:
         
         # Assert
         mock_update.message.reply_text.assert_called_once()
-        assert "введите поисковый запрос" in mock_update.message.reply_text.call_args[0][0].lower()
+        response = mock_update.message.reply_text.call_args[0][0].lower()
+        assert "использование" in response
+        assert "поиск" in response
 
 
 class TestBookInfo:
@@ -238,7 +253,7 @@ class TestSeriesListing:
         
         # Assert
         mock_update.message.reply_text.assert_called_once()
-        assert "серий нет" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "серии не найдены" in mock_update.message.reply_text.call_args[0][0].lower()
     
     @pytest.mark.asyncio
     async def test_list_series_with_books(self, mock_update, mock_context, mock_db_connection):
