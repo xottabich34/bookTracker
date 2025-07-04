@@ -306,6 +306,7 @@ class TestBookDeletion:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Тестовая книга", "Описание"))
+        book_id = cursor.lastrowid
         mock_db_connection.commit()
         
         mock_update.message.text = "1"
@@ -315,7 +316,7 @@ class TestBookDeletion:
         await delete_book_select(mock_update, mock_context)
         
         # Assert
-        assert mock_context.user_data['book_to_delete'] == "Тестовая книга"
+        assert mock_context.user_data['book_to_delete'] == book_id
         mock_update.message.reply_text.assert_called_once()
         assert "удалить книгу" in mock_update.message.reply_text.call_args[0][0].lower()
     
@@ -325,10 +326,11 @@ class TestBookDeletion:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Тестовая книга", "Описание"))
+        book_id = cursor.lastrowid
         mock_db_connection.commit()
         
         mock_update.message.text = "✅ Да, удалить"
-        mock_context.user_data['book_to_delete'] = "Тестовая книга"
+        mock_context.user_data['book_to_delete'] = book_id
         
         # Act
         result = await delete_book_confirm(mock_update, mock_context)
@@ -368,6 +370,7 @@ class TestBookEditing:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Тестовая книга", "Описание"))
+        book_id = cursor.lastrowid
         mock_db_connection.commit()
         
         mock_update.message.text = "1"
@@ -377,7 +380,8 @@ class TestBookEditing:
         await edit_book_select(mock_update, mock_context)
         
         # Assert
-        assert mock_context.user_data['book_to_edit'] == "Тестовая книга"
+        assert mock_context.user_data['book_to_edit'] == book_id
+        assert mock_context.user_data['book_title'] == "Тестовая книга"
         mock_update.message.reply_text.assert_called_once()
         assert "отредактировать в книге" in mock_update.message.reply_text.call_args[0][0].lower()
     
@@ -387,9 +391,11 @@ class TestBookEditing:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Тестовая книга", "Описание"))
+        book_id = cursor.lastrowid
         mock_db_connection.commit()
         mock_update.message.text = "📝 Описание"
-        mock_context.user_data['book_to_edit'] = "Тестовая книга"
+        mock_context.user_data['book_to_edit'] = book_id
+        mock_context.user_data['book_title'] = "Тестовая книга"
         # Act
         await edit_field_select(mock_update, mock_context)
         # Assert
@@ -403,10 +409,12 @@ class TestBookEditing:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Тестовая книга", "Старое описание"))
+        book_id = cursor.lastrowid
         mock_db_connection.commit()
         
         mock_update.message.text = "Новое описание"
-        mock_context.user_data['book_to_edit'] = "Тестовая книга"
+        mock_context.user_data['book_to_edit'] = book_id
+        mock_context.user_data['book_title'] = "Тестовая книга"
         mock_context.user_data['edit_field'] = 'description'
         # Act
         result = await edit_value_process(mock_update, mock_context)

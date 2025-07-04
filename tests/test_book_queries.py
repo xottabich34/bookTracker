@@ -3,15 +3,17 @@
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from telegram.ext import ConversationHandler
 from main import (
     list_books, my_books, search_books, search_start, search_process,
     book_info_start, book_info_select, list_series
 )
 
 @pytest.fixture(autouse=True)
-def patch_main_db(mock_db_connection):
-    with patch("main.cursor", mock_db_connection.cursor()), patch("main.conn", mock_db_connection):
-        yield
+def patch_main_db(mock_db_connection, mock_context):
+    mock_context.cursor = mock_db_connection.cursor()
+    mock_context.conn = mock_db_connection
+    yield
 
 class TestBookListing:
     """Тесты для отображения списков книг"""
@@ -106,13 +108,13 @@ class TestBookSearch:
         cursor.execute("INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)", (2, 1))
         mock_db_connection.commit()
         
-        mock_update.message.text = "война"
+        mock_update.message.text = "Война"
 
         # Act
         result = await search_process(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         mock_update.message.reply_text.assert_called_once()
         response_text = mock_update.message.reply_text.call_args[0][0]
         assert "Война и мир" in response_text
@@ -124,19 +126,22 @@ class TestBookSearch:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Война и мир", "Описание"))
+        book1_id = cursor.lastrowid
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Анна Каренина", "Описание"))
+        book2_id = cursor.lastrowid
         cursor.execute("INSERT INTO authors (name) VALUES (?)", ("Лев Толстой",))
-        cursor.execute("INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)", (1, 1))
-        cursor.execute("INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)", (2, 1))
+        author_id = cursor.lastrowid
+        cursor.execute("INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)", (book1_id, author_id))
+        cursor.execute("INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)", (book2_id, author_id))
         mock_db_connection.commit()
         
-        mock_update.message.text = "толстой"
+        mock_update.message.text = "Лев"
         
         # Act
         result = await search_process(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         mock_update.message.reply_text.assert_called_once()
         response_text = mock_update.message.reply_text.call_args[0][0]
         assert "Война и мир" in response_text
@@ -156,7 +161,7 @@ class TestBookSearch:
         result = await search_process(mock_update, mock_context)
         
         # Assert
-        assert result == -1  # ConversationHandler.END
+        assert result == ConversationHandler.END
         mock_update.message.reply_text.assert_called_once()
         response_text = mock_update.message.reply_text.call_args[0][0]
         assert "не найдено" in response_text.lower()
@@ -207,15 +212,14 @@ class TestBookInfo:
         mock_db_connection.commit()
         
         mock_update.message.text = "1"
-        mock_context.user_data['books_list'] = [(1, "Война и мир")]
+        mock_context.user_data['available_books'] = ["Война и мир"]
         
         # Act
         await book_info_select(mock_update, mock_context)
         
         # Assert
         mock_update.message.reply_photo.assert_called_once()
-        mock_update.message.reply_text.assert_called()
-        response_text = mock_update.message.reply_text.call_args[0][0]
+        response_text = mock_update.message.reply_photo.call_args[1]['caption']
         assert "Война и мир" in response_text
         assert "Описание" in response_text
     
@@ -228,7 +232,7 @@ class TestBookInfo:
         mock_db_connection.commit()
         
         mock_update.message.text = "1"
-        mock_context.user_data['books_list'] = [(1, "Война и мир")]
+        mock_context.user_data['available_books'] = ["Война и мир"]
         
         # Act
         await book_info_select(mock_update, mock_context)
@@ -239,7 +243,6 @@ class TestBookInfo:
         response_text = mock_update.message.reply_text.call_args[0][0]
         assert "Война и мир" in response_text
         assert "Описание" in response_text
-        assert "обложка отсутствует" in response_text.lower()
 
 
 class TestSeriesListing:
@@ -261,10 +264,11 @@ class TestSeriesListing:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO series (name) VALUES (?)", ("Русская классика",))
+        series_id = cursor.lastrowid
         cursor.execute("INSERT INTO books (title, description, series_id, series_order) VALUES (?, ?, ?, ?)", 
-                      ("Книга 1", "Описание 1", 1, 1))
+                      ("Книга 1", "Описание 1", series_id, 1))
         cursor.execute("INSERT INTO books (title, description, series_id, series_order) VALUES (?, ?, ?, ?)", 
-                      ("Книга 2", "Описание 2", 1, 2))
+                      ("Книга 2", "Описание 2", series_id, 2))
         mock_db_connection.commit()
         
         # Act

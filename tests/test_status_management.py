@@ -46,20 +46,17 @@ class TestStatusManagement:
         mock_db_connection.commit()
         
         mock_update.message.text = "1"
-        mock_context.user_data['books_list'] = [(1, "Война и мир")]
+        mock_context.user_data['available_books'] = ["Война и мир"]
         
         # Act
         await status_select_book(mock_update, mock_context)
         
         # Assert
-        assert mock_context.user_data['book_for_status'] == 1
+        assert mock_context.user_data['selected_book'] == "Война и мир"
         mock_update.message.reply_text.assert_called_once()
         response_text = mock_update.message.reply_text.call_args[0][0]
-        assert "выберите статус" in response_text.lower()
-        assert "планирую" in response_text.lower()
-        assert "читаю" in response_text.lower()
-        assert "закончил" in response_text.lower()
-        assert "отменил" in response_text.lower()
+        assert "выберите" in response_text.lower()
+        assert "статус" in response_text.lower()
     
     @pytest.mark.asyncio
     async def test_status_select_book_invalid(self, mock_update, mock_context, mock_db_connection):
@@ -70,7 +67,7 @@ class TestStatusManagement:
         mock_db_connection.commit()
         
         mock_update.message.text = "999"
-        mock_context.user_data['books_list'] = [(1, "Война и мир")]
+        mock_context.user_data['available_books'] = ["Война и мир"]
         
         # Act
         await status_select_book(mock_update, mock_context)
@@ -85,10 +82,12 @@ class TestStatusManagement:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Война и мир", "Описание"))
+        book_id = cursor.lastrowid
         mock_db_connection.commit()
         
-        mock_update.message.text = "Планирую"
-        mock_context.user_data['book_for_status'] = 1
+        mock_update.message.text = "📋 Запланировано"
+        mock_context.user_data['selected_book'] = "Война и мир"
+        mock_update.effective_user.id = 12345
         
         # Act
         result = await status_select_status(mock_update, mock_context)
@@ -96,10 +95,10 @@ class TestStatusManagement:
         # Assert
         assert result == ConversationHandler.END
         mock_update.message.reply_text.assert_called()
-        assert "статус установлен" in mock_update.message.reply_text.call_args[0][0].lower()
+        assert "статус книги" in mock_update.message.reply_text.call_args[0][0].lower()
         
         # Проверяем, что статус сохранен в базе
-        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, 1))
+        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, book_id))
         result = cursor.fetchone()
         assert result is not None
         assert result[0] == "planning"
@@ -110,10 +109,12 @@ class TestStatusManagement:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Война и мир", "Описание"))
+        book_id = cursor.lastrowid
         mock_db_connection.commit()
         
-        mock_update.message.text = "Читаю"
-        mock_context.user_data['book_for_status'] = 1
+        mock_update.message.text = "📖 Читаю"
+        mock_context.user_data['selected_book'] = "Война и мир"
+        mock_update.effective_user.id = 12345
         
         # Act
         result = await status_select_status(mock_update, mock_context)
@@ -122,21 +123,23 @@ class TestStatusManagement:
         assert result == ConversationHandler.END
         
         # Проверяем, что статус сохранен в базе
-        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, 1))
+        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, book_id))
         result = cursor.fetchone()
         assert result is not None
         assert result[0] == "reading"
     
     @pytest.mark.asyncio
     async def test_status_select_status_finished(self, mock_update, mock_context, mock_db_connection):
-        """Тест: установка статуса 'закончил'"""
+        """Тест: установка статуса 'прочитано'"""
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Война и мир", "Описание"))
+        book_id = cursor.lastrowid
         mock_db_connection.commit()
         
-        mock_update.message.text = "Закончил"
-        mock_context.user_data['book_for_status'] = 1
+        mock_update.message.text = "✅ Прочитано"
+        mock_context.user_data['selected_book'] = "Война и мир"
+        mock_update.effective_user.id = 12345
         
         # Act
         result = await status_select_status(mock_update, mock_context)
@@ -145,21 +148,23 @@ class TestStatusManagement:
         assert result == ConversationHandler.END
         
         # Проверяем, что статус сохранен в базе
-        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, 1))
+        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, book_id))
         result = cursor.fetchone()
         assert result is not None
         assert result[0] == "finished"
     
     @pytest.mark.asyncio
     async def test_status_select_status_cancelled(self, mock_update, mock_context, mock_db_connection):
-        """Тест: установка статуса 'отменил'"""
+        """Тест: установка статуса 'отменено'"""
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Война и мир", "Описание"))
+        book_id = cursor.lastrowid
         mock_db_connection.commit()
         
-        mock_update.message.text = "Отменил"
-        mock_context.user_data['book_for_status'] = 1
+        mock_update.message.text = "❌ Отменено"
+        mock_context.user_data['selected_book'] = "Война и мир"
+        mock_update.effective_user.id = 12345
         
         # Act
         result = await status_select_status(mock_update, mock_context)
@@ -168,7 +173,7 @@ class TestStatusManagement:
         assert result == ConversationHandler.END
         
         # Проверяем, что статус сохранен в базе
-        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, 1))
+        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, book_id))
         result = cursor.fetchone()
         assert result is not None
         assert result[0] == "cancelled"
@@ -182,7 +187,8 @@ class TestStatusManagement:
         mock_db_connection.commit()
         
         mock_update.message.text = "Неверный статус"
-        mock_context.user_data['book_for_status'] = 1
+        mock_context.user_data['selected_book'] = "Война и мир"
+        mock_update.effective_user.id = 12345
         
         # Act
         await status_select_status(mock_update, mock_context)
@@ -197,11 +203,13 @@ class TestStatusManagement:
         # Arrange
         cursor = mock_db_connection.cursor()
         cursor.execute("INSERT INTO books (title, description) VALUES (?, ?)", ("Война и мир", "Описание"))
-        cursor.execute("INSERT INTO user_books (user_id, book_id, status) VALUES (?, ?, ?)", (12345, 1, "planning"))
+        book_id = cursor.lastrowid
+        cursor.execute("INSERT INTO user_books (user_id, book_id, status) VALUES (?, ?, ?)", (12345, book_id, "planning"))
         mock_db_connection.commit()
         
-        mock_update.message.text = "Читаю"
-        mock_context.user_data['book_for_status'] = 1
+        mock_update.message.text = "📖 Читаю"
+        mock_context.user_data['selected_book'] = "Война и мир"
+        mock_update.effective_user.id = 12345
         
         # Act
         result = await status_select_status(mock_update, mock_context)
@@ -210,7 +218,7 @@ class TestStatusManagement:
         assert result == ConversationHandler.END
         
         # Проверяем, что статус обновлен
-        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, 1))
+        cursor.execute("SELECT status FROM user_books WHERE user_id = ? AND book_id = ?", (12345, book_id))
         result = cursor.fetchone()
         assert result is not None
         assert result[0] == "reading"

@@ -492,18 +492,20 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = ' '.join(context.args)
     search_term = f"%{query}%"
+    print("SEARCH_TERM:", search_term)
 
     cursor.execute("""
         SELECT DISTINCT b.title, GROUP_CONCAT(a.name, ', ') as authors
         FROM books b
         LEFT JOIN book_authors ba ON b.id = ba.book_id
         LEFT JOIN authors a ON ba.author_id = a.id
-        WHERE b.title LIKE ? COLLATE NOCASE OR a.name LIKE ? COLLATE NOCASE
+        WHERE b.title LIKE ? OR a.name LIKE ?
         GROUP BY b.id, b.title
         ORDER BY b.title
     """, (search_term, search_term))
 
     results = cursor.fetchall()
+    print("SEARCH_RESULTS:", results)
 
     if results:
         lines = []
@@ -546,18 +548,19 @@ async def search_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SEARCH_QUERY
 
     search_term = f"%{query}%"
+    print("SEARCH_TERM:", search_term)
 
     cur.execute("""
         SELECT DISTINCT b.title, GROUP_CONCAT(a.name, ', ') as authors
         FROM books b
         LEFT JOIN book_authors ba ON b.id = ba.book_id
         LEFT JOIN authors a ON ba.author_id = a.id
-        WHERE b.title LIKE ? COLLATE NOCASE OR a.name LIKE ? COLLATE NOCASE
+        WHERE b.title LIKE ? OR a.name LIKE ?
         GROUP BY b.id, b.title
         ORDER BY b.title
     """, (search_term, search_term))
-
     results = cur.fetchall()
+    print("SEARCH_RESULTS:", results)
 
     if results:
         lines = []
@@ -725,7 +728,18 @@ async def delete_book_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return DELETE_SELECT_BOOK
 
         selected_book = available_books[book_index]
-        context.user_data['book_to_delete'] = selected_book
+        
+        # Получаем ID книги по названию
+        cur = getattr(context, 'cursor', cursor)
+        cur.execute("SELECT id FROM books WHERE title = ?", (selected_book,))
+        book_id_result = cur.fetchone()
+        
+        if not book_id_result:
+            await update.message.reply_text("Книга не найдена. Попробуйте еще раз:")
+            return DELETE_SELECT_BOOK
+            
+        book_id = book_id_result[0]
+        context.user_data['book_to_delete'] = book_id
 
         # Создаем клавиатуру подтверждения
         confirm_keyboard = ReplyKeyboardMarkup(
@@ -753,35 +767,38 @@ async def delete_book_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
     response = update.message.text.strip()
 
     if response == "✅ Да, удалить":
-        book_to_delete = context.user_data.get('book_to_delete')
+        book_id = context.user_data.get('book_to_delete')
 
         try:
-            # Получаем ID книги
-            cursor.execute("SELECT id FROM books WHERE title = ?", (book_to_delete,))
-            book_id = cursor.fetchone()
+            # Получаем название книги по ID
+            cur = getattr(context, 'cursor', cursor)
+            cur.execute("SELECT title FROM books WHERE id = ?", (book_id,))
+            book_title_result = cur.fetchone()
 
-            if not book_id:
+            if not book_title_result:
                 await update.message.reply_text("Книга не найдена.", reply_markup=menu_keyboard)
                 return ConversationHandler.END
 
-            book_id = book_id[0]
+            book_title = book_title_result[0]
 
             # Удаляем связанные записи
-            cursor.execute("DELETE FROM user_books WHERE book_id = ?", (book_id,))
-            cursor.execute("DELETE FROM book_authors WHERE book_id = ?", (book_id,))
+            cur.execute("DELETE FROM user_books WHERE book_id = ?", (book_id,))
+            cur.execute("DELETE FROM book_authors WHERE book_id = ?", (book_id,))
 
             # Удаляем саму книгу
-            cursor.execute("DELETE FROM books WHERE id = ?", (book_id,))
+            cur.execute("DELETE FROM books WHERE id = ?", (book_id,))
 
-            conn.commit()
+            db_conn = getattr(context, 'conn', conn)
+            db_conn.commit()
 
             await update.message.reply_text(
-                f"Книга «{book_to_delete}» успешно удалена из библиотеки.",
+                f"Книга «{book_title}» успешно удалена из библиотеки.",
                 reply_markup=menu_keyboard
             )
 
         except Exception as e:
-            conn.rollback()
+            db_conn = getattr(context, 'conn', conn)
+            db_conn.rollback()
             logger.error(f"Ошибка при удалении книги: {e}")
             await update.message.reply_text(
                 "Произошла ошибка при удалении книги. Попробуйте еще раз.",
@@ -1027,7 +1044,19 @@ async def edit_book_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return EDIT_SELECT_BOOK
 
         selected_book = available_books[book_index]
-        context.user_data['book_to_edit'] = selected_book
+        
+        # Получаем ID книги по названию
+        cur = getattr(context, 'cursor', cursor)
+        cur.execute("SELECT id FROM books WHERE title = ?", (selected_book,))
+        book_id_result = cur.fetchone()
+        
+        if not book_id_result:
+            await update.message.reply_text("Книга не найдена. Попробуйте еще раз:")
+            return EDIT_SELECT_BOOK
+            
+        book_id = book_id_result[0]
+        context.user_data['book_to_edit'] = book_id
+        context.user_data['book_title'] = selected_book  # Сохраняем название для отображения
 
         # Создаем клавиатуру для выбора поля
         field_keyboard = ReplyKeyboardMarkup(
@@ -1073,39 +1102,43 @@ async def edit_field_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['edit_field'] = field_mapping[field]
 
     # Получаем текущее значение
-    book_title = context.user_data['book_to_edit']
+    book_id = context.user_data['book_to_edit']
+    book_title = context.user_data['book_title']
     field_name = field_mapping[field]
 
     if field_name == "description" or field_name == "isbn":
-        cursor.execute(f"SELECT {field_name} FROM books WHERE title = ?", (book_title,))
-        current_value = cursor.fetchone()[0] or "Не задано"
+        cur = getattr(context, 'cursor', cursor)
+        cur.execute(f"SELECT {field_name} FROM books WHERE id = ?", (book_id,))
+        current_value = cur.fetchone()[0] or "Не задано"
         await update.message.reply_text(
             f"Текущее значение: {current_value}\n\nВведите новое значение:",
             reply_markup=ReplyKeyboardRemove()
         )
     elif field_name == "authors":
-        cursor.execute("""
+        cur = getattr(context, 'cursor', cursor)
+        cur.execute("""
             SELECT GROUP_CONCAT(a.name, ', ') as authors
             FROM books b
             JOIN book_authors ba ON b.id = ba.book_id
             JOIN authors a ON ba.author_id = a.id
-            WHERE b.title = ?
+            WHERE b.id = ?
             GROUP BY b.id
-        """, (book_title,))
-        result = cursor.fetchone()
+        """, (book_id,))
+        result = cur.fetchone()
         current_value = result[0] if result else "Не задано"
         await update.message.reply_text(
             f"Текущие авторы: {current_value}\n\nВведите новых авторов через запятую:",
             reply_markup=ReplyKeyboardRemove()
         )
     elif field_name == "series":
-        cursor.execute("""
+        cur = getattr(context, 'cursor', cursor)
+        cur.execute("""
             SELECT s.name, b.series_order
             FROM books b
             LEFT JOIN series s ON b.series_id = s.id
-            WHERE b.title = ?
-        """, (book_title,))
-        result = cursor.fetchone()
+            WHERE b.id = ?
+        """, (book_id,))
+        result = cur.fetchone()
         if result and result[0]:
             current_value = f"{result[0]} (книга {result[1]})" if result[1] else result[0]
         else:
@@ -1125,13 +1158,17 @@ async def edit_value_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
     new_value = update.message.text.strip()
-    book_title = context.user_data['book_to_edit']
+    book_id = context.user_data['book_to_edit']
+    book_title = context.user_data['book_title']
     field_name = context.user_data['edit_field']
 
     try:
+        cur = getattr(context, 'cursor', cursor)
+        db_conn = getattr(context, 'conn', conn)
+        
         if field_name == "description":
-            cursor.execute("UPDATE books SET description = ? WHERE title = ?", (new_value, book_title))
-            conn.commit()
+            cur.execute("UPDATE books SET description = ? WHERE id = ?", (new_value, book_id))
+            db_conn.commit()
             await update.message.reply_text(
                 f"Описание книги «{book_title}» обновлено!",
                 reply_markup=menu_keyboard
@@ -1147,8 +1184,8 @@ async def edit_value_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return EDIT_VALUE
 
             isbn_value = None if new_value == '-' else new_value
-            cursor.execute("UPDATE books SET isbn = ? WHERE title = ?", (isbn_value, book_title))
-            conn.commit()
+            cur.execute("UPDATE books SET isbn = ? WHERE id = ?", (isbn_value, book_id))
+            db_conn.commit()
             await update.message.reply_text(
                 f"ISBN книги «{book_title}» обновлен!",
                 reply_markup=menu_keyboard
@@ -1156,48 +1193,42 @@ async def edit_value_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         elif field_name == "authors":
             # Удаляем старых авторов
-            cursor.execute("""
-                DELETE FROM book_authors 
-                WHERE book_id = (SELECT id FROM books WHERE title = ?)
-            """, (book_title,))
+            cur.execute("DELETE FROM book_authors WHERE book_id = ?", (book_id,))
 
             # Добавляем новых авторов
             if new_value and new_value != '-':
                 author_names = [a.strip() for a in new_value.split(',') if a.strip()]
-                book_id = cursor.execute("SELECT id FROM books WHERE title = ?", (book_title,)).fetchone()[0]
 
                 for name in author_names:
-                    cursor.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)", (name,))
-                    cursor.execute("SELECT id FROM authors WHERE name = ?", (name,))
-                    author_id = cursor.fetchone()[0]
-                    cursor.execute("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
-                                   (book_id, author_id))
+                    cur.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)", (name,))
+                    cur.execute("SELECT id FROM authors WHERE name = ?", (name,))
+                    author_id = cur.fetchone()[0]
+                    cur.execute("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
+                               (book_id, author_id))
 
-            conn.commit()
+            db_conn.commit()
             await update.message.reply_text(
                 f"Авторы книги «{book_title}» обновлены!",
                 reply_markup=menu_keyboard
             )
 
         elif field_name == "series":
-            book_id = cursor.execute("SELECT id FROM books WHERE title = ?", (book_title,)).fetchone()[0]
-
             if new_value == '-':
                 # Удаляем серию
-                cursor.execute("UPDATE books SET series_id = NULL, series_order = NULL WHERE id = ?", (book_id,))
+                cur.execute("UPDATE books SET series_id = NULL, series_order = NULL WHERE id = ?", (book_id,))
             else:
                 # Добавляем или обновляем серию
-                cursor.execute("SELECT id FROM series WHERE name = ? COLLATE NOCASE", (new_value,))
-                result = cursor.fetchone()
+                cur.execute("SELECT id FROM series WHERE name = ? COLLATE NOCASE", (new_value,))
+                result = cur.fetchone()
 
                 if result:
                     series_id = result[0]
                 else:
-                    cursor.execute("INSERT INTO series (name) VALUES (?)", (new_value,))
-                    series_id = cursor.lastrowid
-                cursor.execute("UPDATE books SET series_id = ? WHERE id = ?", (series_id, book_id))
+                    cur.execute("INSERT INTO series (name) VALUES (?)", (new_value,))
+                    series_id = cur.lastrowid
+                cur.execute("UPDATE books SET series_id = ? WHERE id = ?", (series_id, book_id))
 
-            conn.commit()
+            db_conn.commit()
             await update.message.reply_text(
                 f"Серия книги «{book_title}» обновлена!",
                 reply_markup=menu_keyboard
@@ -1340,7 +1371,7 @@ async def show_covers(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- BOT LAUNCH ---
-async def main():
+def build_application():
     app = ApplicationBuilder().token(TOKEN).build()
 
     # Универсальные обработчики для кнопок отмены и возврата в меню (работают всегда)
@@ -1475,6 +1506,7 @@ async def main():
 
     return app
 
+# Удаляю дублирующее определение main и оставляю только одну функцию main
 async def main():
     app = build_application()
     try:
