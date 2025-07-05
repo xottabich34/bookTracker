@@ -1,3 +1,12 @@
+# --- ПЛАН РЕФАКТОРИНГА main.py ---
+# 1. booktracker/db.py         — работа с базой данных (инициализация, функции)
+# 2. booktracker/handlers.py   — все обработчики команд и состояний
+# 3. booktracker/keyboards.py  — все клавиатуры ReplyKeyboardMarkup
+# 4. booktracker/utils.py      — декораторы, вспомогательные функции
+# 5. main.py                   — только точка входа, запуск приложения
+#
+# По мере переноса кода, этот план будет обновляться.
+# ------------------------------
 # mypy: disable-error-code="union-attr,index"
 import logging
 import os
@@ -11,6 +20,11 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     filters, ContextTypes, ConversationHandler
 )
+
+from booktracker.db import conn, cursor
+from booktracker.utils import owner_only
+from booktracker.keyboards import menu_keyboard, cancel_keyboard, status_keyboard
+from booktracker.handlers import universal_cancel, add_cancel, status_cancel, search_cancel, book_info_cancel, delete_book_cancel, edit_book_cancel
 
 # Загрузка переменных окружения из файла .env
 load_dotenv()
@@ -28,84 +42,64 @@ logger = logging.getLogger(__name__)  # Создание логгера для �
 
 # --- НАСТРОЙКА БАЗЫ ДАННЫХ ---
 # Подключение к базе данных SQLite (или создание, если её нет)
-conn = sqlite3.connect("books.db", check_same_thread=False)
-cursor = conn.cursor()
+# conn = sqlite3.connect("books.db", check_same_thread=False)
+# cursor = conn.cursor()
 # Создание таблицы для серий книг, если она ещё не существует
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS series (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE COLLATE NOCASE
-)
-""")
+# cursor.execute("""
+# CREATE TABLE IF NOT EXISTS series (
+#     id INTEGER PRIMARY KEY AUTOINCREMENT,
+#     name TEXT UNIQUE COLLATE NOCASE
+# )
+# """)
 
 # Создание таблицы для книг, если она ещё не существует
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS books (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT UNIQUE,
-    description TEXT,
-    image_blob BLOB,
-    series_id INTEGER,
-    series_order INTEGER,
-    isbn TEXT,
-    FOREIGN KEY (series_id) REFERENCES series(id)
-)
-""")
+# cursor.execute("""
+# CREATE TABLE IF NOT EXISTS books (
+#     id INTEGER PRIMARY KEY AUTOINCREMENT,
+#     title TEXT UNIQUE,
+#     description TEXT,
+#     image_blob BLOB,
+#     series_id INTEGER,
+#     series_order INTEGER,
+#     isbn TEXT,
+#     FOREIGN KEY (series_id) REFERENCES series(id)
+# )
+# """)
 
 # Создание таблицы для авторов, если она ещё не существует
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS authors (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE
-)
-""")
+# cursor.execute("""
+# CREATE TABLE IF NOT EXISTS authors (
+#     id INTEGER PRIMARY KEY AUTOINCREMENT,
+#     name TEXT UNIQUE
+# )
+# """)
 
 # Создание таблицы для связи книг и авторов, если она ещё не существует
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS book_authors (
-    book_id INTEGER,
-    author_id INTEGER,
-    PRIMARY KEY (book_id, author_id),
-    FOREIGN KEY (book_id) REFERENCES books(id),
-    FOREIGN KEY (author_id) REFERENCES authors(id)
-)
-""")
+# cursor.execute("""
+# CREATE TABLE IF NOT EXISTS book_authors (
+#     book_id INTEGER,
+#     author_id INTEGER,
+#     PRIMARY KEY (book_id, author_id),
+#     FOREIGN KEY (book_id) REFERENCES books(id),
+#     FOREIGN KEY (author_id) REFERENCES authors(id)
+# )
+# """)
 
 # Создание таблицы для связи пользователей и книг, если она ещё не существует
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS user_books (
-    user_id INTEGER,
-    book_id INTEGER,
-    status TEXT CHECK(status IN ('planning', 'reading', 'finished', 'cancelled')),
-    PRIMARY KEY (user_id, book_id),
-    FOREIGN KEY (book_id) REFERENCES books(id)
-)
-""")
-conn.commit()  # Сохранение изменений в базе данных
+# cursor.execute("""
+# CREATE TABLE IF NOT EXISTS user_books (
+#     user_id INTEGER,
+#     book_id INTEGER,
+#     status TEXT CHECK(status IN ('planning', 'reading', 'finished', 'cancelled')),
+#     PRIMARY KEY (user_id, book_id),
+#     FOREIGN KEY (book_id) REFERENCES books(id)
+# )
+# """)
+# conn.commit()  # Сохранение изменений в базе данных
 
 
 # --- ДЕКОРАТОР ДЛЯ КОНТРОЛЯ ДОСТУПА ---
-def owner_only(func):
-    # Декоратор, который проверяет, есть ли ID пользователя в списке разрешённых
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user is None:
-            if update.message is not None:
-                await update.message.reply_text("Ошибка: пользователь не найден.")
-            return
-
-        if update.message is None:
-            return
-
-        user_id = update.effective_user.id
-        if user_id not in ALLOWED_IDS:
-            await update.message.reply_text(f"Извините, доступ запрещён. {user_id}")
-            print(f'user {update.effective_user.name} with id {user_id} is blocked')
-            with open('access.log','w+') as f:
-                f.write(f'user {update.effective_user.name} with id {user_id} is blocked')
-            return
-        return await func(update, context)
-
-    return wrapper
+# def owner_only(func): ...
 
 
 # --- МАСТЕР ДОБАВЛЕНИЯ КНИГИ ---
@@ -114,27 +108,14 @@ ADD_TITLE, ADD_DESC, ADD_COVER, ADD_ISBN, ADD_AUTHORS, ADD_SERIES, ADD_SERIES_OR
 
 
 # Клавиатура с основными командами
-menu_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        ["➕ Добавить книгу", "📋 Список книг"],
-        ["📖 Мои книги", "🔍 Поиск"],
-        ["🏷 Статусы", "📚 Серии"],
-        ["📷 Обложки", "ℹ️ О книге"]
-    ],
-    resize_keyboard=True  # Автоматическое изменение размера клавиатуры
-)
+# menu_keyboard = ...
 
 # Универсальная клавиатура с кнопкой отмены
-cancel_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        ["🔙 Отмена", "🏠 Главное меню"]
-    ],
-    resize_keyboard=True
-)
+# cancel_keyboard = ...
 
 
 # Начало процесса добавления книги
-@owner_only
+# @owner_only
 async def add_start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Введи название книги:",
@@ -144,7 +125,7 @@ async def add_start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
 
 
 # Обработка ввода названия книги
-@owner_only
+# @owner_only
 async def add_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.text.strip():
         await update.message.reply_text("Название книги не может быть пустым. Введите снова:")
@@ -155,7 +136,7 @@ async def add_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # Обработка ввода описания книги
-@owner_only
+# @owner_only
 async def add_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['new_book']['description'] = update.message.text.strip()  # Сохранение описания
     await update.message.reply_text("Теперь отправь обложку книги (как изображение):")
@@ -163,7 +144,7 @@ async def add_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # Обработка загрузки обложки книги
-@owner_only
+# @owner_only
 async def add_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:  # Проверка, что сообщение содержит фото
         await update.message.reply_text("Пожалуйста, отправь фото")
@@ -182,7 +163,7 @@ async def add_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # Обработка ввода ISBN
-@owner_only
+# @owner_only
 async def add_isbn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     isbn = update.message.text.strip()
     isbn_clean = isbn.replace("-", "").replace(" ", "")  # Очистка ISBN от лишних символов
@@ -196,7 +177,7 @@ async def add_isbn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # Обработка ввода авторов
-@owner_only
+# @owner_only
 async def add_authors(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.text.strip():
         await update.message.reply_text("Список авторов не может быть пустым. Введите хотя бы одного автора:")
@@ -208,7 +189,7 @@ async def add_authors(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # Обработка ввода серии
-@owner_only
+# @owner_only
 async def add_series(update: Update, context: ContextTypes.DEFAULT_TYPE):
     series_name = update.message.text.strip()
     if series_name != "-":  # Если серия указана
@@ -358,22 +339,10 @@ async def list_series(update: Update, context: ContextTypes.DEFAULT_TYPE):
 STATUS_SELECT_BOOK, STATUS_SELECT_STATUS = range(7, 9)
 
 # Клавиатура для выбора статуса
-status_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        ["📖 Читаю", "✅ Прочитано"],
-        ["📋 Запланировано", "❌ Отменено"],
-        ["🔙 Отмена"]
-    ],
-    resize_keyboard=True
-)
+# status_keyboard = ...
 
 # Универсальная клавиатура с кнопкой отмены
-cancel_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        ["🔙 Отмена", "🏠 Главное меню"]
-    ],
-    resize_keyboard=True
-)
+# cancel_keyboard = ...
 
 
 @owner_only
